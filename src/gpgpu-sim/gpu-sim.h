@@ -66,6 +66,15 @@
 #define SAMPLELOG 222
 #define DUMPLOG 333
 
+// pshyun {
+#define GPU_TIMEOUT 500000000
+#define LOG_ST 1
+#define LOG_ED (GPU_TIMEOUT-1)
+#define LOG_INTERVAL 1000000
+#define TGT_MPID -1
+#define TGT_UID -1
+// } pshyun
+
 class gpgpu_context;
 
 extern tr1_hash_map<new_addr_type, unsigned> address_random_interleaving;
@@ -216,6 +225,9 @@ class memory_config {
     m_valid = false;
     gpgpu_dram_timing_opt = NULL;
     gpgpu_L2_queue_config = NULL;
+    // pshyun {
+    gpgpu_cxl_queue_config=NULL;
+    // } pshyun
     gpgpu_ctx = ctx;
   }
   void init() {
@@ -306,7 +318,9 @@ class memory_config {
 
     m_address_mapping.init(m_n_mem, m_n_sub_partition_per_memory_channel);
     m_L2_config.init(&m_address_mapping);
-
+    // pshyun {
+    m_L3_NDC_config.init(&m_address_mapping);
+    // } pshyun
     m_valid = true;
 
     sscanf(write_queue_size_opt, "%d:%d:%d",
@@ -326,6 +340,7 @@ class memory_config {
   bool m_valid;
   mutable l2_cache_config m_L2_config;
   bool m_L2_texure_only;
+  bool m_L3_texure_only;
 
   char *gpgpu_dram_timing_opt;
   char *gpgpu_L2_queue_config;
@@ -388,6 +403,14 @@ class memory_config {
   linear_to_raw_address_translation m_address_mapping;
 
   unsigned icnt_flit_size;
+
+  // pshyun {
+  char *gpgpu_cxl_queue_config;
+  unsigned cxl_latency;
+  mutable l3_ndc_cache_config m_L3_NDC_config;
+  unsigned m_n_cxl_per_memory_channel;
+  unsigned ndc_bypass;
+  // } pshyun
 
   unsigned dram_bnk_indexing_policy;
   unsigned dram_bnkgrp_indexing_policy;

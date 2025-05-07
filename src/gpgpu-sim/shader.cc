@@ -4732,7 +4732,13 @@ void simt_core_cluster::icnt_cycle() {
     mem_fetch *mf = (mem_fetch *)::icnt_pop(m_cluster_id);
     if (!mf) return;
     assert(mf->get_tpc() == m_cluster_id);
-    assert(mf->get_type() == READ_REPLY || mf->get_type() == WRITE_ACK);
+
+    // // pshyun
+    // if((mf->get_type() != READ_REPLY) && (mf->get_type() != WRITE_ACK)) {
+    //   printf("[PSH_DEBUG]Shader %d\n", mf->get_type());
+    //   mf->print(stdout);
+    // }
+    assert(mf->get_type() == READ_REPLY || mf->get_type() == WRITE_ACK); // FIXME
 
     // The packet size varies depending on the type of request:
     // - For read request and atomic request, the packet contains the data

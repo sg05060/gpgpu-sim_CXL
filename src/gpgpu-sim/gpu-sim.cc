@@ -245,6 +245,12 @@ void memory_config::reg_options(class OptionParser *opp) {
   option_parser_register(opp, "-gpgpu_dram_partition_queues", OPT_CSTR,
                          &gpgpu_L2_queue_config, "i2$:$2d:d2$:$2i", "8:8:8:8");
 
+  // pshyun {
+  option_parser_register(opp, "-gpgpu_cxl_partition_queues", OPT_CSTR, &gpgpu_cxl_queue_config, 
+                          "i2$:$2d",
+                          "8:8");
+  // } pshyun
+
   option_parser_register(opp, "-l2_ideal", OPT_BOOL, &l2_ideal,
                          "Use a ideal L2 cache that always hit", "0");
   option_parser_register(
@@ -253,6 +259,18 @@ void memory_config::reg_options(class OptionParser *opp) {
       " {<sector?>:<nsets>:<bsize>:<assoc>,<rep>:<wr>:<alloc>:<wr_alloc>:<set_"
       "index_fn>,<mshr>:<N>:<merge>,<mq>:<fifo_entry>,<data_port_width>",
       "S:32:128:24,L:B:m:L:P,A:192:4,32:0,32");
+
+  // pshyun {
+  option_parser_register(opp, "-gpgpu_cache:dl3", OPT_CSTR, &m_L3_NDC_config.m_config_string, 
+                  "unified banked L3_NDC data cache config "
+      " {<sector?>:<nsets>:<bsize>:<assoc>,<rep>:<wr>:<alloc>:<wr_alloc>:<set_"
+      "index_fn>,<mshr>:<N>:<merge>,<mq>:<fifo_entry>,<data_port_width>",
+      "S:32:128:24,L:B:m:L:P,A:192:4,32:0,32");
+  option_parser_register(opp, "-gpgpu_cache:dl3_texture_only", OPT_BOOL,
+                         &m_L3_texure_only, "L3 cache used for texture only",
+                         "1");
+  // } pshyun
+
   option_parser_register(opp, "-gpgpu_cache:dl2_texture_only", OPT_BOOL,
                          &m_L2_texure_only, "L2 cache used for texture only",
                          "1");
@@ -263,6 +281,12 @@ void memory_config::reg_options(class OptionParser *opp) {
                          &m_n_sub_partition_per_memory_channel,
                          "number of memory subpartition in each memory module",
                          "1");
+  // pshyun {
+    option_parser_register(opp, "-gpgpu_n_cxl_per_mchannel", OPT_UINT32, &m_n_cxl_per_memory_channel, 
+                 "number of cxl channel in each memory module",
+                 "1");
+  // } pshyun
+
   option_parser_register(opp, "-gpgpu_n_mem_per_ctrlr", OPT_UINT32,
                          &gpu_n_mem_per_ctrlr,
                          "number of memory chips per memory controller", "1");
@@ -322,6 +346,18 @@ void memory_config::reg_options(class OptionParser *opp) {
   // SST mode activate
   option_parser_register(opp, "-SST_mode", OPT_BOOL, &SST_mode, "SST mode",
                          "0");
+
+  // pshyun {
+  option_parser_register(opp, "-cxl_latency", OPT_UINT32, &cxl_latency,
+                          "CXL latency (default 120)",
+                          "120");
+  // } pshyun
+
+  // pshyun {
+  option_parser_register(opp, "-ndc_bypass", OPT_UINT32, &ndc_bypass,
+                          "NDC bypass (default 0)",
+                          "0");
+  // } pshyun
   m_address_mapping.addrdec_setoption(opp);
 }
 
@@ -1603,6 +1639,43 @@ void gpgpu_sim::gpu_print_stat(unsigned long long streamID) {
       total_l2_css.print_port_stats(stdout, "L2_cache");
     }
   }
+  // pshyun {
+  if (!m_memory_config->m_L3_NDC_config.disabled()) {
+      cache_stats l3_ndc_stats;
+      struct cache_sub_stats l3_ndc_css;
+      struct cache_sub_stats total_l3_ndc_css;
+      l3_ndc_stats.clear();
+      l3_ndc_css.clear();
+      total_l3_ndc_css.clear();
+
+      printf("\n========= L3_NDC cache stats =========\n");
+      for (unsigned i = 0; i < m_memory_config->m_n_mem; i++)
+      {
+          m_memory_partition_unit[i]->m_dram->accumulate_L3_NDCcache_stats(l3_ndc_stats);
+          m_memory_partition_unit[i]->m_dram->get_L3_NDCcache_sub_stats(l3_ndc_css);
+
+          fprintf(stdout, "L3_NDC_cache_bank[%d]: Access = %u, Miss = %u, Miss_rate = %.3lf, Pending_hits = %u, Reservation_fails = %u\n",
+                  i, l3_ndc_css.accesses, l3_ndc_css.misses, (double)l3_ndc_css.misses / (double)l3_ndc_css.accesses, l3_ndc_css.pending_hits, l3_ndc_css.res_fails);
+
+          total_l3_ndc_css += l3_ndc_css;
+      }
+      if (!m_memory_config->m_L3_NDC_config.disabled() && m_memory_config->m_L3_NDC_config.get_num_lines())
+      {
+          // L3_NDCc_print_cache_stat();
+          printf("L3_NDC_total_cache_accesses = %u\n", total_l3_ndc_css.accesses);
+          printf("L3_NDC_total_cache_misses = %u\n", total_l3_ndc_css.misses);
+          if (total_l3_ndc_css.accesses > 0)
+              printf("L3_NDC_total_cache_miss_rate = %.4lf\n", (double)total_l3_ndc_css.misses / (double)total_l3_ndc_css.accesses);
+          printf("L3_NDC_total_cache_pending_hits = %u\n", total_l3_ndc_css.pending_hits);
+          printf("L3_NDC_total_cache_reservation_fails = %u\n", total_l3_ndc_css.res_fails);
+          printf("L3_NDC_total_cache_breakdown:\n");
+          l3_ndc_stats.print_stats(stdout, streamID, "L3_NDC_cache_stats_breakdown");
+          l3_ndc_stats.print_fail_stats(stdout, streamID,
+                                "L3_NDC_cache_stats_breakdown");
+          total_l3_ndc_css.print_port_stats(stdout, "L3_NDC_cache");
+      }
+  }
+  // } pshyun
 
   if (m_config.gpgpu_cflog_interval != 0) {
     spill_log_to_file(stdout, 1, gpu_sim_cycle);

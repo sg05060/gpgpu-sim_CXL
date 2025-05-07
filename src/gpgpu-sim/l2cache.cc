@@ -82,7 +82,12 @@ memory_partition_unit::memory_partition_unit(unsigned partition_id,
       m_stats(stats),
       m_arbitration_metadata(config),
       m_gpu(gpu) {
-  m_dram = new dram_t(m_id, m_config, m_stats, this, gpu);
+
+  // pshyun {
+  //m_dram = new dram_t(m_id, m_config, m_stats, this, gpu);
+    m_dram = new ndc_t(m_id, m_config, m_stats, this, gpu);
+    m_wrbk_mf_allocator = new partition_mf_allocator(config);
+  // } pshyun
 
   m_sub_partition = new memory_sub_partition
       *[m_config->m_n_sub_partition_per_memory_channel];
@@ -93,6 +98,34 @@ memory_partition_unit::memory_partition_unit(unsigned partition_id,
     m_sub_partition[p] =
         new memory_sub_partition(sub_partition_id, m_config, stats, gpu);
   }
+  
+  // pshyun {
+  unsigned int dram_cxl;
+  unsigned int ndc_fill;
+  sscanf(m_config->gpgpu_cxl_queue_config,"%u:%u", &dram_cxl,&ndc_fill);
+  m_dram_cxl_queue = new fifo_pipeline<mem_fetch>("dram-to-cxl",0,dram_cxl);
+  m_ndc_fill_queue = new fifo_pipeline<mem_fetch>("ndc_fill",0,ndc_fill);
+
+  dram_total_cycle_cnt = 0;
+  dram_acc_cnt = 0;
+  dram_acc_from_l2_cnt = 0;
+  dram_acc_from_cxl_cnt = 0;
+  queue_full_cnt_returnq_cache_cycle = 0;
+  queue_full_cnt_returnq_fill_cycle = 0;
+  queue_full_cnt_returnq_ndc_cycle = 0;
+  queue_full_cnt_ndc_fill_q = 0;
+  queue_full_cnt_dram_cxl_q = 0;
+  queue_full_cnt_mrqq = 0;
+  queue_full_cnt_fill_mrqq = 0;
+  ndc_hit_cnt = 0;
+  ndc_miss_cnt = 0;
+  ndc_rsv_fail_cnt = 0;
+  ndc_evict_cnt = 0;
+  ndc_data_port_busy_cnt = 0;
+  ndc_fill_port_busy_cnt = 0;
+  print_flag = 0;
+  // } pshyun
+
 }
 
 void memory_partition_unit::handle_memcpy_to_gpu(
@@ -110,6 +143,10 @@ void memory_partition_unit::handle_memcpy_to_gpu(
 
 memory_partition_unit::~memory_partition_unit() {
   delete m_dram;
+  // pshyun {
+    delete m_dram_cxl_queue;
+    delete m_ndc_fill_queue;
+  // } pshyun
   for (unsigned p = 0; p < m_config->m_n_sub_partition_per_memory_channel;
        p++) {
     delete m_sub_partition[p];
@@ -189,6 +226,12 @@ void memory_partition_unit::arbitration_metadata::print(FILE *fp) const {
 
 bool memory_partition_unit::busy() const {
   bool busy = false;
+  // pshyun {
+  if (!m_request_tracker_dram.empty())
+      busy = true;
+  if (!m_request_tracker_ndc.empty())
+      busy = true;
+  // } pshyun
   for (unsigned p = 0; p < m_config->m_n_sub_partition_per_memory_channel;
        p++) {
     if (m_sub_partition[p]->busy()) {
@@ -236,6 +279,7 @@ int memory_partition_unit::global_sub_partition_id_to_local_id(
 void memory_partition_unit::simple_dram_model_cycle() {
   // pop completed memory request from dram and push it to dram-to-L2 queue
   // of the original sub partition
+  printf("[YH_DEBUG][ERROR] simple_dram_model_cycle is not allowed\n");
   if (!m_dram_latency_queue.empty() &&
       ((m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle) >=
        m_dram_latency_queue.front().ready_cycle)) {
@@ -306,73 +350,624 @@ void memory_partition_unit::simple_dram_model_cycle() {
 void memory_partition_unit::dram_cycle() {
   // pop completed memory request from dram and push it to dram-to-L2 queue
   // of the original sub partition
+
+  // pshyun {
+  // --------------------------------------------------
+  // 1) for m_cxl_latency_queue
+  // --------------------------------------------------
+  if( !m_cxl_latency_queue.empty() && ( (m_gpu->gpu_sim_cycle+m_gpu->gpu_tot_sim_cycle) >= m_cxl_latency_queue.front().ready_cycle )) {
+    //check type and path
+    mem_fetch* mf = m_cxl_latency_queue.front().req;
+    //printf("[KSH_DEBUG][cxl_latency_queue->pop] uid: %d, ret = %d, req = %d\n", mf->get_request_uid(), mf->get_cxl_req_type(), mf->get_cxl_ret_path());
+
+    unsigned dest_global_spid = mf->get_sub_partition_id(); 
+    int dest_spid = global_sub_partition_id_to_local_id(dest_global_spid); 
+    assert(m_sub_partition[dest_spid]->get_id() == dest_global_spid); 
+
+    if (mf->get_cxl_ret_path() == CXL_NONE) {
+      // CXL WB case
+      m_cxl_latency_queue.pop_front();    //removed
+      
+      if(mf->get_access_type() != NDC_WRBK_ACC) {
+          printf("[YH_DEBUG][mem_partition[%d]][mem_sub_partition[%d]] wrong access type (or cxl_ret_path) was detected. uid: %d\n", m_id, dest_spid, mf->get_request_uid());
+          mf->print(stdout);
+          assert(0);
+      }
+      //for_removing_tracker_ndc:delete(mf);
+      printf("[PSH_DEBUG][L2CAHCE][Check Delete0]\n");
+      delete_new_mf(mf);
+    }
+    else if (mf->get_cxl_ret_path() == CXL_DRAM) {
+      // prefetch / prediction or L2_DRAM and L2 already sent
+      if (!ndc_fill_queue_full()) {
+        if(mf->get_access_type() == NDC_WR_ALLOC_R) {
+            // cxl read -> dram fill(write)
+            mf->set_type_to_write();
+        }
+        //YH_DEBUG:printf("[YH_DEBUG][dram_cycle][mem_partition[%d]][mem_sub_partition[%d]] ret_path = DRAM(predict)\n", m_id, dest_spid);
+        mf->set_status(IN_PARTITION_CXL_TO_DRAM_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+        // TODO:if(mf->get_request_uid() == TGT_UID)
+        // TODO:    printf("[YH_DEBUG] Moved info. uid: %d, status: %s \n", mf->get_request_uid(), Status_str[mf->m_status]);
+
+        ndc_fill_queue_push(mf);
+        // yhyang: 250221_16_for_hack: //  cxl read -> dram fill(write)
+        // yhyang: 250221_16_for_hack: dram_req_t *dr = new dram_req_t(mf);
+        // yhyang: 250221_16_for_hack: bool fill_success = m_dram->ndc_fill_access(dr);
+        // yhyang: 250221_16_for_hack: if (fill_success) delete dr;
+
+        m_cxl_latency_queue.pop_front();
+      }
+      else {
+        queue_full_cnt_ndc_fill_q++;
+      }
+    }
+    else if (mf->get_cxl_ret_path() == CXL_L2) {
+      // NDC hit or Linefill (DRAM request is already sent) case
+      if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
+        //YH_DEBUG:printf("[YH_DEBUG][dram_cycle][mem_partition[%d]][mem_sub_partition[%d]] ret_path = L2(NDC hit or linefill)\n", m_id, dest_spid);
+        mem_fetch *mf_orig = find_orig_mf(mf);
+        mf->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+        mf->set_l2_done(true);
+        printf("[PSH_DEBUG][L2CAHCE][Check Delete1]\n");
+        delete_new_mf(mf);
+        m_sub_partition[dest_spid]->dram_L2_queue_push(mf_orig);
+        m_cxl_latency_queue.pop_front();
+      }
+    }
+    else if (mf->get_cxl_ret_path() == CXL_L2_DRAM) {
+      if ((!ndc_fill_queue_full()) || (!m_sub_partition[dest_spid]->dram_L2_queue_full())) {
+        mem_fetch *mf_orig = find_orig_mf(mf);
+
+        //cxl read -> dram fill(write)
+        mf->set_type_to_write();
+        mf->set_status(IN_PARTITION_CXL_TO_DRAM_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+        mf->set_cxl_req_type(CXL_RD_LINE_FILL);
+        //yhyang:why?:mf->set_ndc_resp(NDC_INVALID);
+        if ((!ndc_fill_queue_full()) && (!m_sub_partition[dest_spid]->dram_L2_queue_full())) {
+            printf("[PSH_DEBUG][%d][cxl_latency_queue->pop : go to l2 and ndc_fill_queue] uid: %d, mf_orig uid %d\n", m_gpu->gpu_sim_cycle, mf->get_request_uid(), mf_orig->get_request_uid());
+            ndc_fill_queue_push(mf);
+            // yhyang: 250221_16_for_hack: dram_req_t *dr = new dram_req_t(mf);
+            // yhyang: 250221_16_for_hack: bool fill_success = m_dram->ndc_fill_access(dr);
+            // yhyang: 250221_16_for_hack: if (fill_success) delete dr;
+
+            mf->set_l2_done(true);
+            //dram_access_is_required:delete_new_mf(mf);
+            m_sub_partition[dest_spid]->dram_L2_queue_push(mf_orig);
+
+            delete_new_mf(mf);
+
+            mf->set_cxl_ret_path(CXL_NONE);
+            m_cxl_latency_queue.pop_front();
+        }
+        //check if NDC_FILL_DONE treatment is wrong due to l2_done flag
+        else if (!ndc_fill_queue_full()) {
+
+            ndc_fill_queue_push(mf);
+            // yhyang: 250221_16_for_hack: dram_req_t *dr = new dram_req_t(mf);
+            // yhyang: 250221_16_for_hack: bool fill_success = m_dram->ndc_fill_access(dr);
+            // yhyang: 250221_16_for_hack: if (fill_success) delete dr;
+
+            mf->set_cxl_ret_path(CXL_L2);
+        }
+        else if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
+            queue_full_cnt_ndc_fill_q++;
+            mf->set_l2_done(true);
+            //dram_access_is_required:delete_new_mf(mf);
+            m_sub_partition[dest_spid]->dram_L2_queue_push(mf_orig);
+            delete_new_mf(mf);
+            mf->set_cxl_ret_path(CXL_DRAM);
+        }
+        else {
+            queue_full_cnt_ndc_fill_q++;
+            // Invalid
+        }
+#ifdef YH_DEBUG
+        printf("[YH_DEBUG] CXL_L2_DRAM queue mf information\n");
+        if(m_id == 0) mf->print(stdout);
+#endif // YH_DEBUG
+      }
+    }
+  }
+  // } pshyun
+
+  // pshyun {
+  // --------------------------------------------------
+  // 2) for pushing to CXL latency queue
+  //    DRAM->CXL path. dram_cxl_queue -> cxl_latency_queue
+  // --------------------------------------------------
+  if (!dram_cxl_queue_empty()) {
+    mem_fetch *mf = dram_cxl_queue_top();
+    dram_cxl_queue_pop();
+    MEMPART_DPRINTF("Issue mem_fetch request %p from dram to cxl queue\n", mf);
+    dram_delay_t d;
+    d.req = mf;
+    d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->cxl_latency;
+    m_cxl_latency_queue.push_back(d);
+    printf("[PSH_DEBUG][%d][dram_cxl_queue->cxl_latency_queue] uid: %d, ret = %d, req = %d, now_cycle = %d, ready_cycle = %d\n", 
+      m_gpu->gpu_sim_cycle, mf->get_request_uid(), mf->get_cxl_req_type(), mf->get_cxl_ret_path(),m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle, d.ready_cycle);
+    mf->set_status(IN_PARTITION_CXL_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+  }
+  // } pshyun
+
+  // pshyun {
+  // --------------------------------------------------
+  // 3) for popping returnq
+  //    3-1) returnq -> delete (fill_done)
+  //    3-2) returnq -> dram_L2_queue
+  //    3-3) returnq -> dram_cxl_queue
+  // --------------------------------------------------
   mem_fetch *mf_return = m_dram->return_queue_top();
   if (mf_return) {
     unsigned dest_global_spid = mf_return->get_sub_partition_id();
     int dest_spid = global_sub_partition_id_to_local_id(dest_global_spid);
     assert(m_sub_partition[dest_spid]->get_id() == dest_global_spid);
-    if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
-      if (mf_return->get_access_type() == L1_WRBK_ACC) {
-        m_sub_partition[dest_spid]->set_done(mf_return);
-        delete mf_return;
-      } else {
-        m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
-        mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
-                              m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
-        m_arbitration_metadata.return_credit(dest_spid);
-        MEMPART_DPRINTF(
-            "mem_fetch request %p return from dram to sub partition %d\n",
-            mf_return, dest_spid);
+    if (m_config->m_L3_NDC_config.disabled()) { // original
+      if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
+        if (mf_return->get_access_type() == L1_WRBK_ACC) {
+          m_sub_partition[dest_spid]->set_done(mf_return);
+          delete mf_return;
+        } else {
+          m_sub_partition[dest_spid]->dram_L2_queue_push(mf_return);
+          mf_return->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE,
+                                m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+          m_arbitration_metadata.return_credit(dest_spid);
+          MEMPART_DPRINTF(
+              "mem_fetch request %p return from dram to sub partition %d\n",
+              mf_return, dest_spid);
+        }
+        m_dram->return_queue_pop();
       }
-      m_dram->return_queue_pop();
+    } else { // l3_ndc_cache enable
+      // ---------------------------------------------------------------------------------------------------------------
+      // NDC case
+      // ---------------------------------------------------------------------------------------------------------------
+      // WR or RD line fill. for identifying 1) and 2), check l2_done flag...?
+      // --------------------------------------------------------------------------------------------------------------
+      // 1) Read NDC_MISS -> CXL READ -> NDC_MISS + NDC_RD_LINE_FILL done case
+      //      : [1] NDC_MISS        : (1) send to CXL, (2) set l2_done after CXL latency_queue, (3) clean orig request after CXL latency queue
+      //      : [2] NDC_RD_LINE_FILL: (1) return credit, (2) set dram_done, (6) clean this resp
+      // 2) Read NDC_MISS -> Wait at MSHR -> NDC_RD_LINE_FILL done case
+      //      : [1] NDC_RD_LINE_FILL: (1) set l2_done, (2) set dram_done, (3) return credit, (4) clean orig request, (5) send to L2, (6) clean this resp
+      // 3) Write NDC_MISS -> CXL READ(CXL_WR_LINE_FILL/NDC_WR_ALLOC_R) -> orig(CXL_NONE / NDC_INVALID) + new(NDC_FILL_DONE) response done case
+      //      : [1-1] NDC_INVALID (L1/L2_WRBK_ACC_W)  :  (1) clear orig request ,  (2) set l2_done
+      //      : [1-2] NDC_INVALID (GLOBAL_ACC_W)      :  (1) set l2_done,  (2) clean orig request, (3) send to L2
+      //      : [2] NDC_FILL_DONE  :  (1) return credit, (2) set dram_done, (3) just delete
+      // 4) Write NDC_MISS -> Wait at MSHR -> NDC_INVALID + NDC_FILL_DONE response done case
+      //      : [1-1] NDC_INVALID (L1/L2_WRBK_ACC_W)  :  (1) clear orig request ,  (2) set l2_done
+      //      : [1-2] NDC_INVALID (GLOBAL_ACC_W)      :  (1) set l2_done,  (2) clean orig request, (3) send to L2
+      //      : [2] NDC_FILL_DONE  :  (1) return credit, (2) set dram_done, (3) just delete
+      if ((mf_return->get_ndc_resp() == NDC_FILL_DONE)) {
+          if((!mf_return->get_l2_done()) && (mf_return->get_cxl_req_type() == CXL_RD_LINE_FILL)) {
+              // case 2-1
+              // 2) Read NDC_MISS -> Wait at MSHR -> NDC_RD_LINE_FILL done case
+              //      : [1] NDC_RD_LINE_FILL: (1) set l2_done, (2) set dram_done, (3) return credit, (4) clean orig request, (5) send to L2, (6) clean this resp
+              if (!m_sub_partition[dest_spid]->dram_L2_queue_full())
+              {
+                  // send mf_orig to L2
+                  mem_fetch *mf_orig = find_orig_mf(mf_return);
+                  {printf("[PSH_DEBUG][%d][returnq:ndc_fill_done][2-1]\n",m_gpu->gpu_sim_cycle); mf_return->print(stdout); mf_orig->print(stdout);}
+                  mf_orig->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+                  m_sub_partition[dest_spid]->dram_L2_queue_push(mf_orig);
+                  // delete mf_new
+                  mf_return->set_l2_done(true);
+                  mf_return->set_dram_done(true);
+                  m_arbitration_metadata.return_credit(dest_spid);
+                  printf("[PSH_DEBUG][L2CACHE][Check Delete2]\n");
+                  delete_new_mf(mf_return);
+                  m_dram->return_queue_pop();
+              }
+          } else {
+              // case 1-2, 3-2, 4-2
+              // fill done. L2 is already done
+              // delete mf_new
+              {printf("[PSH_DEBUG][returnq:ndc_fill_done][1-2/3-2/4-2]\n"); mf_return->print(stdout);}
+              mf_return->set_dram_done(true);
+              m_arbitration_metadata.return_credit(dest_spid);
+              printf("[PSH_DEBUG][L2CACHE][Check Delete3]\n");
+              if (mf_return->get_access_type() == L1_WRBK_ACC || mf_return->get_access_type() == L2_WRBK_ACC)
+                delete mf_return;
+              else 
+                delete_new_mf(mf_return);   // just deleted
+              m_dram->return_queue_pop();
+          }
+      }
+      // dram_L2_queue_full -> hit&dram_L2_queue_full / miss&dram_cxl_queue_full
+      else if ((mf_return->get_ndc_resp() == NDC_HIT)) {
+          {printf("[PSH_DEBUG][%d][returnq:hit]\n",m_gpu->gpu_sim_cycle);}
+          mem_fetch *mf_orig = find_orig_mf(mf_return);
+          //L1/L2 WRBK HIT
+          if (mf_return->get_access_type() == L1_WRBK_ACC || mf_return->get_access_type() == L2_WRBK_ACC) {
+              mf_return->set_l2_done(true);
+              mf_return->set_dram_done(true);
+              if(mf_return->get_original_mf() != nullptr) {
+                if(find_orig_wrbk_mf(mf_return->get_original_mf())) {
+                  m_arbitration_metadata.return_credit(dest_spid);  // return credit
+                  printf("[PSH_DEBUG][%d]Find First WRBK(HIT) Returnq Request mf_uid %d, mf_origin_uid %d\n", m_gpu->gpu_sim_cycle, mf_return->get_request_uid(), mf_return->get_original_mf()->get_request_uid());
+                  m_sub_partition[dest_spid]->set_done(mf_return->get_original_mf());
+                  clear_orig_wrbk_mf(mf_return->get_original_mf());
+                  delete mf_return->get_original_mf();
+                  delete mf_return;
+                } else {
+                  delete mf_return;
+                }
+              } else {
+                m_arbitration_metadata.return_credit(dest_spid);  // return credit
+                printf("[PSH_DEBUG][%d]Find First WRBK(HIT)(Single) Returnq Request mf_uid %d, mf_origin_uid %d\n", m_gpu->gpu_sim_cycle, mf_return->get_request_uid());
+                m_sub_partition[dest_spid]->set_done(mf_return);
+                clear_orig_wrbk_mf(mf_return);
+                delete mf_return;
+              }
+              // TODO:delete mf_return;
+              m_dram->return_queue_pop();
+          } else if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
+              // send mf_orig to L2
+              mf_orig->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+              mf_orig->set_reply(); // FIXME
+              m_sub_partition[dest_spid]->dram_L2_queue_push(mf_orig);
+              MEMPART_DPRINTF("mem_fetch request %p return from dram to sub partition %d\n", mf_return, dest_spid);
+              // delete mf_new
+              mf_return->set_l2_done(true);
+              mf_return->set_dram_done(true);
+              printf("[PSH_DEBUG][L2CAHCE][Check Delete5]\n");
+              delete_new_mf(mf_return);
+              m_dram->return_queue_pop();
+              m_arbitration_metadata.return_credit(dest_spid);  // return credit
+          }
+      } else if (mf_return->get_ndc_resp() == NDC_MISS) {
+          // case1-1
+          // NDC miss read.
+          // NDC_WR_ALLOC_R has CXL_NONE
+          if((m_id %4)== 0) printf("[PSH_DEBUG][retrunq:miss] uid: %d, ret = %d, req = %d\n", mf_return->get_request_uid(), mf_return->get_cxl_req_type(), mf_return->get_cxl_ret_path());
+
+          if (!(mf_return->get_cxl_ret_path() == CXL_NONE)) {
+              if (!dram_cxl_queue_full()) {
+                  assert (mf_return->get_cxl_ret_path() != CXL_DRAM); // CXL_DRAM is only for write. WR_MISS should not be controlled here 
+                  dram_cxl_queue_push(mf_return);
+                  mf_return->set_status(IN_PARTITION_DRAM_TO_CXL_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+                  // not_here:m_arbitration_metadata.return_credit(dest_spid);
+                  MEMPART_DPRINTF("mem_fetch request %p return from dram to sub partition %d for CXL access\n", mf_return, dest_spid);
+                  m_dram->return_queue_pop();
+              }
+              else {
+                  queue_full_cnt_dram_cxl_q++;
+              }
+          } else {  // NDC miss write ack
+              // write request to DRAM created by mf_adaptor. It is required to respond to L2 if GLOBAL_ACC_W. If L1/L2 WRBK case, no ack.
+              // mf_new maded by mf_adaptor should be deleted here
+              assert(mf_return->get_access_type() != NDC_WR_ALLOC_R);   //NDC_WR_ALLOC_R type is created by NDC
+              mem_fetch *mf_orig = find_orig_mf(mf_return);
+
+              if (!((mf_return->get_access_type() == L1_WRBK_ACC) || (mf_return->get_access_type() == L2_WRBK_ACC))) {
+                  // case 3-1-2, case4-1-2
+                  // GLOBAL_ACC_W case. Need to response to L2
+                  if (!m_sub_partition[dest_spid]->dram_L2_queue_full()) {
+                      if ((mf_return->get_request_uid() == TGT_UID) || (mf_orig->get_request_uid() == TGT_UID)) {
+                          printf("[YH_DEBUG][%d][NDC_MISS][uid:%d]\n", m_gpu->gpu_sim_cycle, mf_return->get_request_uid());
+                          mf_return->print(stdout);
+                          mf_orig->print(stdout);
+                      }
+                      mf_return->set_l2_done(true);
+                      mf_return->set_dram_done(true);
+                      // moved_to_dram_L2_queue_pop_step:mf->set_reply();    // set_reply for GLOBAL_ACC_W
+                      mf_orig->set_status(IN_PARTITION_DRAM_TO_L2_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+                      mf_orig->set_reply(); // pshyun : FIXME
+                      printf("[PSH_DEBUG][%d][NDC_MISS:First write acc] uid : %d\n", m_gpu->gpu_sim_cycle, mf_return->get_request_uid());
+  
+                      delete_new_mf(mf_return);  // this will deleted here even though fill request is not completed. so set dram_done = true
+                                                  // credit will be returned by fill_done response
+                      m_sub_partition[dest_spid]->dram_L2_queue_push(mf_orig);
+                      m_dram->return_queue_pop();
+                  }
+              } else {
+                  // case 3-1-1, case4-1-1 (L1_WRBK, L2_WRBK)
+                  if(find_orig_wrbk_mf(mf_return->get_original_mf())) {
+                    printf("[PSH_DEBUG][%d]Find First WRBK Returnq Request mf_origin_uid %d\n",  m_gpu->gpu_sim_cycle, mf_return->get_original_mf());
+                    m_sub_partition[dest_spid]->set_done(mf_return->get_original_mf());
+                    clear_orig_wrbk_mf(mf_return->get_original_mf());
+                  }
+                  mf_return->set_l2_done(true);
+                  mf_return->set_dram_done(true);                    // set dram_done also for removing WRBK request's info. There is no mapping info between dram_req and NDC miss->fill request
+                  //m_sub_partition[dest_spid]->set_done(mf_orig);  // original WB request is deleted. no credit return. WR_LINE_FILL_DONE will return credit
+                  delete mf_return;   // mf_new deleted at here
+                  m_dram->return_queue_pop();
+              }
+          }
+      } else if (mf_return->get_access_type() == NDC_WR_ALLOC_R) {
+          {printf("[PSH_DEBUG][%d][returnq:wr_alloc_r]\n",m_gpu->gpu_sim_cycle); mf_return->print(stdout);}
+
+          if (!dram_cxl_queue_full()) {
+              // created by NDC during write miss
+              mf_return->set_l2_done(true);
+
+              //mf_return->set_ndc_resp(NDC_MISS);
+              mf_return->set_cxl_req_type(CXL_WR_LINE_FILL);
+              mf_return->set_cxl_ret_path(CXL_DRAM);
+
+              dram_cxl_queue_push(mf_return);
+              mf_return->set_status(IN_PARTITION_DRAM_TO_CXL_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+              //not_here:m_arbitration_metadata.return_credit(dest_spid);
+              MEMPART_DPRINTF("mem_fetch request %p return from dram to sub partition %d for CXL access\n", mf_return, dest_spid);
+              m_request_tracker_ndc.insert(mf_return);    // insert to tracker_ndc
+              m_dram->return_queue_pop();
+          }
+          else {
+              queue_full_cnt_dram_cxl_q++;
+          }
+      } else if (mf_return->get_access_type() == NDC_WRBK_ACC) {
+          printf("[PSH_DEBUG][%d][returnq:wrbk_acc]\n",m_gpu->gpu_sim_cycle);
+          if (!dram_cxl_queue_full()) {
+#ifdef YH_DEBUG
+                    printf("[YH_DEBUG][%d][NDC_WRBK_ACC] NDC_WRBK_ACC is detected uid: %d\n", m_gpu->gpu_sim_cycle, mf_return->get_request_uid());
+#endif // YH_DEBUG
+              // does not need to respond to L2 or re-write to DRAM. only need to write to CXL
+              mf_return->set_l2_done(true);
+              mf_return->set_dram_done(true);
+              mf_return->set_cxl_req_type(CXL_WB);
+
+              dram_cxl_queue_push(mf_return);
+              mf_return->set_status(IN_PARTITION_DRAM_TO_CXL_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+              // not_here:m_arbitration_metadata.return_credit(dest_spid);
+              MEMPART_DPRINTF("mem_fetch request %p return from dram to sub partition %d for CXL WB access\n", mf_return, dest_spid);
+              m_request_tracker_ndc.insert(mf_return);
+              m_dram->return_queue_pop();
+              ndc_evict_cnt += 1;
+          }
+          // yhyang:} else if ((mf_return->get_ndc_resp() == NDC_EVICT)) {
+          // yhyang:    // yhyang invalid condition
+          // yhyang:    assert(0);
+          else {
+              queue_full_cnt_dram_cxl_q++;
+          }
+      } else {
+          printf("[YH_DEBUG][%d][NDC_INVALID] UNDEFINED response from NDC.uid: %d\n", m_gpu->gpu_sim_cycle, mf_return->get_request_uid());
+          mf_return->print(stdout);
+          assert(0);
+      }
     }
   } else {
     m_dram->return_queue_pop();
   }
 
+  // --------------------------------------------------
+  // 4) for dram cycle
+  // --------------------------------------------------
   m_dram->cycle();
   m_dram->dram_log(SAMPLELOG);
+
+  // pshyun {
+  // --------------------------------------------------
+  // 5) for L2_dram_queue -> dram_latency_queue
+  // 6) for ndc_fill_queue -> dram_latency_queue_from_cxl
+  // --------------------------------------------------
 
   // mem_fetch *mf = m_sub_partition[spid]->L2_dram_queue_top();
   // if( !m_dram->full(mf->is_write()) ) {
   // L2->DRAM queue to DRAM latency queue
   // Arbitrate among multiple L2 subpartitions
-  int last_issued_partition = m_arbitration_metadata.last_borrower();
-  for (unsigned p = 0; p < m_config->m_n_sub_partition_per_memory_channel;
-       p++) {
-    int spid = (p + last_issued_partition + 1) %
-               m_config->m_n_sub_partition_per_memory_channel;
-    if (!m_sub_partition[spid]->L2_dram_queue_empty() &&
-        can_issue_to_dram(spid)) {
-      mem_fetch *mf = m_sub_partition[spid]->L2_dram_queue_top();
-      if (m_dram->full(mf->is_write())) break;
+  if(m_config->ndc_bypass) {
+    int last_issued_partition = m_arbitration_metadata.last_borrower();
+    for (unsigned p = 0; p < m_config->m_n_sub_partition_per_memory_channel; p++) {
+      int spid = (p + last_issued_partition + 1) % m_config->m_n_sub_partition_per_memory_channel;
+      if (!m_sub_partition[spid]->L2_dram_queue_empty() && can_issue_to_dram(spid)) {
+        if (!m_config->m_L3_NDC_config.disabled()) {
+          mem_fetch *mf_orig = m_sub_partition[spid]->L2_dram_queue_top();
+          mem_fetch *mf_new = create_new_mf(mf_orig);
+          //if (m_dram->full(mf->is_write())) break; // we don't need to send request to dram, only cxl
 
-      m_sub_partition[spid]->L2_dram_queue_pop();
-      MEMPART_DPRINTF(
-          "Issue mem_fetch request %p from sub partition %d to dram\n", mf,
-          spid);
+          m_sub_partition[spid]->L2_dram_queue_pop();
+          MEMPART_DPRINTF("Issue mem_fetch request %p from sub partition %d to dram\n", mf_new, spid);
+          mf_new->set_cxl_ret_path(CXL_L2);
+          mf_new->set_dram_done(true);
+          dram_delay_t d;
+          d.req = mf_new;
+          d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
+                          m_config->cxl_latency;
+          m_cxl_latency_queue.push_back(d);
+          mf_new->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE,
+                        m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+          //m_arbitration_metadata.borrow_credit(spid); // we don't need to send request to dram, only cxl
+          break;  // the DRAM should only accept one request per cycle
+        } else {
+          mem_fetch *mf = m_sub_partition[spid]->L2_dram_queue_top();
+          if (m_dram->full(mf->is_write())) break;
+
+          m_sub_partition[spid]->L2_dram_queue_pop();
+          MEMPART_DPRINTF("Issue mem_fetch request %p from sub partition %d to dram\n", mf, spid);
+          dram_delay_t d;
+          d.req = mf;
+          d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
+                          m_config->dram_latency;
+          m_dram_latency_queue.push_back(d);
+          mf->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE,
+                        m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+          m_arbitration_metadata.borrow_credit(spid);
+          break;  // the DRAM should only accept one request per cycle
+        }
+      } else if(!m_sub_partition[spid]->L2_dram_queue_empty()){
+        printf("[PSH_DEBUG]Can't issue to dram, no-credit\n");
+      }
+    }
+  // } else if (!m_dram->full()) {  // pshyun : dram full checking is under the condition  
+  } else {
+    int last_issued_partition = m_arbitration_metadata.last_borrower();
+    for (unsigned p = 0; p < m_config->m_n_sub_partition_per_memory_channel; p++) {
+      int spid = (p + last_issued_partition + 1) % m_config->m_n_sub_partition_per_memory_channel; 
+      // 1) L2->DRAM
+      // create new mf after l2_dram_queue for independent operation
+      if (!m_sub_partition[spid]->L2_dram_queue_empty() && can_issue_to_dram(spid)) {
+        if (!m_config->m_L3_NDC_config.disabled()) {
+            mem_fetch *mf_orig = m_sub_partition[spid]->L2_dram_queue_top();
+
+            if ((mf_orig->get_access_type() == L1_WRBK_ACC) || (mf_orig->get_access_type() == L2_WRBK_ACC)) {
+              if (m_dram->afull(mf_orig->is_write(), ((mf_orig->get_data_size())/32))) break;
+              m_sub_partition[spid]->L2_dram_queue_pop();
+              printf("[PSH_DEBUG][%d] Find WRBK Access\n",m_gpu->gpu_sim_cycle);
+              printf("[PSH_DEBUG][%d]First L2_to_Dram queue\n",m_gpu->gpu_sim_cycle); mf_orig->print(stdout);
+
+              std::vector<mem_fetch *> mf_news;
+              mf_news = breakdown_wrbk_request_to_sector_requests(mf_orig);
+              
+              for (unsigned i = 0; i < mf_news.size(); ++i) {
+                mem_fetch *mf_new = mf_news[i];
+                printf("[PSH_DEBUG][%d] Breakdown WRBK Access\n", m_gpu->gpu_sim_cycle);
+                mf_new->print(stdout);
+                printf(" Compare uid [%u, %u]\n",mf_orig, mf_new->get_original_mf());
+                //m_request_tracker.insert(mf_new);
+                if (mf_new->istexture()) {
+                  printf("[PSH_DEBUG] WRBK Error2\n");
+                } else {
+                  dram_delay_t d;
+                  d.req = mf_new;
+                  d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->dram_latency;
+                  m_dram_latency_queue.push_back(d);
+                  mf_new->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+                  if(i == 0) {
+                    m_arbitration_metadata.borrow_credit(spid);
+                    init_orig_wrbk_mf(mf_orig);
+                  }
+                }
+              }
+              
+            } else {
+              
+              if (m_dram->full(mf_orig->is_write())) break; // pshyun : add condition
+              //wrong...opposite_way: if(mf_new->get_data_size() < 64) {
+              //wrong...opposite_way:     // set minimum access granularity to acces NDC is 64B...
+              //wrong...opposite_way:     mf_new->set_data_size(64);
+              //wrong...opposite_way: }
+              m_sub_partition[spid]->L2_dram_queue_pop();
+              mem_fetch *mf_new = create_new_mf(mf_orig);
+              {printf("[PSH_DEBUG][%d]First L2_to_Dram queue\n",m_gpu->gpu_sim_cycle); mf_orig->print(stdout); mf_new->print(stdout);}
+              
+              MEMPART_DPRINTF("Issue mem_fetch request %p from sub partition %d to dram\n", mf_new, spid);
+              dram_delay_t d;
+              // d.req = mf;
+              d.req = mf_new;
+              d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->dram_latency;
+              m_dram_latency_queue.push_back(d);
+              mf_new->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+              m_arbitration_metadata.borrow_credit(spid);
+
+              // required for predcitor / prefetcher
+              break;  // the DRAM should only accept one request per cycle
+            }
+        } else {
+            mem_fetch *mf = m_sub_partition[spid]->L2_dram_queue_top();
+            if (m_dram->full(mf->is_write())) break; // pshyun : add condition
+
+            m_sub_partition[spid]->L2_dram_queue_pop();
+            MEMPART_DPRINTF("Issue mem_fetch request %p from sub partition %d to dram\n", mf, spid);
+            dram_delay_t d;
+            d.req = mf;
+            d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->dram_latency;
+            m_dram_latency_queue.push_back(d);
+            mf->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+            m_arbitration_metadata.borrow_credit(spid);
+            break;  // the DRAM should only accept one request per cycle
+        }
+      } else if(!m_sub_partition[spid]->L2_dram_queue_empty()) {
+        printf("[PSH_DEBUG]Can't issue to dram, No-Credit\n");
+      }
+    }
+    // 2) CXL->DRAM path fill or prefetch/predict (not related to sub_partition anymore)
+    if (!ndc_fill_queue_empty()) {
+      mem_fetch *mf = ndc_fill_queue_top();
+      ndc_fill_queue_pop();
+      if(m_id == 0) printf("[PSH_DEBUG][ndc_fill_queue_pop->dram_latency_queue_from_cxl] uid: %d, ret = %d, req = %d\n", mf->get_request_uid(), mf->get_cxl_req_type(), mf->get_cxl_ret_path());
+ 
+      MEMPART_DPRINTF("Issue mem_fetch request %p ndc_fill\n", mf);
       dram_delay_t d;
       d.req = mf;
-      d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
-                      m_config->dram_latency;
-      m_dram_latency_queue.push_back(d);
-      mf->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE,
-                     m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
-      m_arbitration_metadata.borrow_credit(spid);
-      break;  // the DRAM should only accept one request per cycle
+      d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->dram_latency;
+      m_dram_latency_queue_from_cxl.push_back(d);
+      mf->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+      //borrow credit is not required because this request was created by NDC and first request was already borrowed credit.
+
+      // required for predcitor / prefetcher
     }
   }
-  //}
+  // } pshyun
 
-  // DRAM latency queue
-  if (!m_dram_latency_queue.empty() &&
-      ((m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle) >=
-       m_dram_latency_queue.front().ready_cycle) &&
-      !m_dram->full(m_dram_latency_queue.front().req->is_write())) {
-    mem_fetch *mf = m_dram_latency_queue.front().req;
-    m_dram_latency_queue.pop_front();
-    m_dram->push(mf);
+  // pshyun {
+  // --------------------------------------------------
+  // 7) dram_latency_queue -> m_dram->m_dram->mrqq
+  // 8) dram_latency_queue_from_cxl -> m_dram->fill_mrqq
+  // --------------------------------------------------
+  if (m_dram->full_from_cxl()) {
+    queue_full_cnt_fill_mrqq++;
   }
+  if (m_dram->full(m_dram_latency_queue.front().req->is_write())) {
+    queue_full_cnt_mrqq++;
+  }
+
+  
+  // DRAM latency queue
+  int cond1 = !m_dram_latency_queue.empty() && ( (m_gpu->gpu_sim_cycle+m_gpu->gpu_tot_sim_cycle) >= m_dram_latency_queue.front().ready_cycle ) && !m_dram->full(m_dram_latency_queue_from_cxl.front().req->is_write());
+  int cond2 = !m_dram_latency_queue_from_cxl.empty() && ((m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle) >= m_dram_latency_queue_from_cxl.front().ready_cycle) && !m_dram->full_from_cxl();
+  if ((cond1) || (cond2)) {
+    if (cond2) {
+      mem_fetch *mf = m_dram_latency_queue_from_cxl.front().req;
+      if(m_id == 0) printf("[PSH_DEBUG][m_dram_latency_queue_from_cxl->pop] uid: %d, ret = %d, req = %d\n", mf->get_request_uid(), mf->get_cxl_req_type(), mf->get_cxl_ret_path());
+      m_dram_latency_queue_from_cxl.pop_front();
+      m_dram->push_from_cxl(mf);
+      dram_acc_cnt++;
+      dram_acc_from_cxl_cnt++;
+    } else if(cond1) {
+      mem_fetch *mf = m_dram_latency_queue.front().req;
+      m_dram_latency_queue.pop_front();
+      //mf->print(stdout);
+      if(m_id == 0) printf("[PSH_DEBUG][m_dram_latency_queue.pop_front] cycle : %d, uid : %d, request_size : %d, addr : %llu, cycle : %d\n", (m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle), mf->get_request_uid(), mf->get_access_size(), mf->get_addr());
+      m_dram->push(mf);
+      dram_acc_cnt++;
+      dram_acc_from_l2_cnt++;
+    }
+  }
+  
+  // if (!m_dram_latency_queue_from_cxl.empty() && (!m_dram->full_from_cxl())) {
+  //   printf("[PSH_DEBUG][m_dram_latency_queue_from_cxl compare] uid : %d, cycle : %d, ready_cycle : %d\n", m_dram_latency_queue_from_cxl.front().req->get_request_uid(),
+  //   (m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle)
+  //    , m_dram_latency_queue_from_cxl.front().ready_cycle);
+  // }
+  //tracker
+  // if(m_gpu->gpu_sim_cycle > 999) {
+  //   if((m_gpu->gpu_sim_cycle % 5000) == 0) {
+  //     if((print_flag == 0)) {
+  //       printf("Memory Sub Parition %u: pending memory requests:\n", m_id);
+  //       if (!m_request_tracker_dram.empty()) {
+  //         for (std::set<mem_fetch *>::const_iterator r = m_request_tracker_dram.begin();
+  //             r != m_request_tracker_dram.end(); ++r) {
+  //           mem_fetch *mf = *r;
+  //           if (mf)
+  //             mf->print(stdout);
+  //           else
+  //             printf(" <NULL mem_fetch?>\n");
+  //         }
+  //       } else {
+  //         printf("Memory Sub Parition %u: none-pending memory requests:\n", m_id);
+  //       }
+  //       print_flag = 1;
+  //     } 
+  //   } else if(((m_gpu->gpu_sim_cycle % 5000) == 1)) {
+  //     if((print_flag == 0)) {
+  //       printf("Memory Sub Parition %u: pending memory requests:\n", m_id);
+  //       if (!m_request_tracker_dram.empty()) {
+  //         for (std::set<mem_fetch *>::const_iterator r = m_request_tracker_dram.begin();
+  //             r != m_request_tracker_dram.end(); ++r) {
+  //           mem_fetch *mf = *r;
+  //           if (mf)
+  //             mf->print(stdout);
+  //           else
+  //             printf(" <NULL mem_fetch?>\n");
+  //         }
+  //       } else {
+  //         printf("Memory Sub Parition %u: none-pending memory requests:\n", m_id);
+  //       }
+  //     } else {
+  //       print_flag = 0;
+  //     }
+  //   }
+  // // } pshyun 
+  // }
 }
 
 void memory_partition_unit::set_done(mem_fetch *mf) {
@@ -450,6 +1045,7 @@ memory_sub_partition::memory_sub_partition(unsigned sub_partition_id,
   m_L2_dram_queue = new fifo_pipeline<mem_fetch>("L2-to-dram", 0, L2_dram);
   m_dram_L2_queue = new fifo_pipeline<mem_fetch>("dram-to-L2", 0, dram_L2);
   m_L2_icnt_queue = new fifo_pipeline<mem_fetch>("L2-to-icnt", 0, L2_icnt);
+  print_flag = 0;
   wb_addr = -1;
 }
 
@@ -485,6 +1081,7 @@ void memory_sub_partition::cache_cycle(unsigned cycle) {
           m_L2_icnt_queue->push(original_wr_mf);
         }
         m_request_tracker.erase(mf);
+        if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete7]\n");
         delete mf;
       }
     }
@@ -493,18 +1090,23 @@ void memory_sub_partition::cache_cycle(unsigned cycle) {
   // DRAM to L2 (texture) and icnt (not texture)
   if (!m_dram_L2_queue->empty()) {
     mem_fetch *mf = m_dram_L2_queue->top();
+  
     if (!m_config->m_L2_config.disabled() && m_L2cache->waiting_for_fill(mf)) {
       if (m_L2cache->fill_port_free()) {
+        printf("[PSH_DEBUG][m_dram_L2_queue->fill l2cache(wait)] uid: %d, cycle : %d\n", mf->get_request_uid(), m_gpu->gpu_sim_cycle);
+        mf->print(stdout);
         mf->set_status(IN_PARTITION_L2_FILL_QUEUE,
                        m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
         m_L2cache->fill(mf, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle +
                                 m_memcpy_cycle_offset);
-        m_dram_L2_queue->pop();
+        m_dram_L2_queue->pop();      
       }
     } else if (!m_L2_icnt_queue->full()) {
       if (mf->is_write() && mf->get_type() == WRITE_ACK)
         mf->set_status(IN_PARTITION_L2_TO_ICNT_QUEUE,
                        m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+      printf("[PSH_DEBUG][m_dram_L2_queue->fill l2cache(non-wait)] uid: %d, cycle : %d\n", mf->get_request_uid(), m_gpu->gpu_sim_cycle);
+      mf->print(stdout);
       m_L2_icnt_queue->push(mf);
       m_dram_L2_queue->pop();
     }
@@ -540,6 +1142,7 @@ void memory_sub_partition::cache_cycle(unsigned cycle) {
             assert(!read_sent);
             if (mf->get_access_type() == L1_WRBK_ACC) {
               m_request_tracker.erase(mf);
+              if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete8]\n");
               delete mf;
             } else {
               mf->set_reply();
@@ -560,6 +1163,7 @@ void memory_sub_partition::cache_cycle(unsigned cycle) {
               !was_writeallocate_sent(events)) {
             if (mf->get_access_type() == L1_WRBK_ACC) {
               m_request_tracker.erase(mf);
+              if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete9]\n");
               delete mf;
             } else if (m_config->m_L2_config.get_write_policy() == WRITE_BACK) {
               mf->set_reply();
@@ -594,6 +1198,48 @@ void memory_sub_partition::cache_cycle(unsigned cycle) {
     mf->set_status(IN_PARTITION_ICNT_TO_L2_QUEUE,
                    m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
   }
+
+  //tracker
+  if(m_gpu->gpu_sim_cycle > 999) {
+    if((m_gpu->gpu_sim_cycle % 5000) == 0) {
+      if((print_flag == 0)) {
+        printf("Memory Sub Parition %u: pending memory requests:\n", m_id);
+        if (!m_request_tracker.empty()) {
+          for (std::set<mem_fetch *>::const_iterator r = m_request_tracker.begin();
+              r != m_request_tracker.end(); ++r) {
+            mem_fetch *mf = *r;
+            if (mf)
+              mf->print(stdout);
+            else
+              printf(" <NULL mem_fetch?>\n");
+          }
+        } else {
+          printf("Memory Sub Parition %u: none-pending memory requests:\n", m_id);
+        }
+        print_flag = 1;
+      } 
+    } else if(((m_gpu->gpu_sim_cycle % 5000) == 1)) {
+      if((print_flag == 0)) {
+        printf("Memory Sub Parition %u: pending memory requests:\n", m_id);
+        if (!m_request_tracker.empty()) {
+          for (std::set<mem_fetch *>::const_iterator r = m_request_tracker.begin();
+              r != m_request_tracker.end(); ++r) {
+            mem_fetch *mf = *r;
+            if (mf)
+              mf->print(stdout);
+            else
+              printf(" <NULL mem_fetch?>\n");
+          }
+        } else {
+          printf("Memory Sub Parition %u: none-pending memory requests:\n", m_id);
+        }
+      } else {
+        print_flag = 0;
+      }
+    }
+  // } pshyun 
+  }
+
 }
 
 bool memory_sub_partition::full() const { return m_icnt_L2_queue->full(); }
@@ -619,6 +1265,102 @@ bool memory_sub_partition::dram_L2_queue_full() const {
 void memory_sub_partition::dram_L2_queue_push(class mem_fetch *mf) {
   m_dram_L2_queue->push(mf);
 }
+
+// pshyun {
+bool memory_partition_unit::ndc_fill_queue_empty() const
+{
+   return m_ndc_fill_queue->empty(); 
+}
+
+class mem_fetch* memory_partition_unit::ndc_fill_queue_top() const
+{
+   return m_ndc_fill_queue->top(); 
+}
+
+void memory_partition_unit::ndc_fill_queue_pop() 
+{
+   m_ndc_fill_queue->pop(); 
+}
+
+void memory_partition_unit::ndc_fill_queue_push( class mem_fetch* mf ) 
+{
+   m_ndc_fill_queue->push(mf); 
+}
+
+bool memory_partition_unit::ndc_fill_queue_full() const
+{
+   return m_ndc_fill_queue->full(); 
+}
+
+bool memory_partition_unit::dram_cxl_queue_empty() const
+{
+   return m_dram_cxl_queue->empty(); 
+}
+bool memory_partition_unit::dram_cxl_queue_full() const
+{
+   return m_dram_cxl_queue->full(); 
+}
+void memory_partition_unit::dram_cxl_queue_push( class mem_fetch* mf )
+{
+   m_dram_cxl_queue->push(mf); 
+}
+class mem_fetch* memory_partition_unit::dram_cxl_queue_top() const
+{
+   return m_dram_cxl_queue->top(); 
+}
+void memory_partition_unit::dram_cxl_queue_pop() 
+{
+   m_dram_cxl_queue->pop(); 
+}
+
+std::vector<mem_fetch *> memory_partition_unit::breakdown_wrbk_request_to_sector_requests(mem_fetch *mf) {
+  std::vector<mem_fetch *> result;
+  mem_access_sector_mask_t sector_mask = mf->get_access_sector_mask();
+  if (mf->get_data_size() == SECTOR_SIZE &&
+      mf->get_access_sector_mask().count() == 1) {
+    result.push_back(mf);
+  }
+  else if (mf->get_data_size() == MAX_MEMORY_ACCESS_SIZE) {
+    // break down every sector
+    mem_access_byte_mask_t mask;
+    for (unsigned i = 0; i < SECTOR_CHUNCK_SIZE; i++) {
+      for (unsigned k = i * SECTOR_SIZE; k < (i + 1) * SECTOR_SIZE; k++) {
+        mask.set(k);
+      }
+      mem_fetch *n_mf = m_wrbk_mf_allocator->alloc(
+          mf->get_addr() + SECTOR_SIZE * i, mf->get_access_type(),
+          mf->get_access_warp_mask(), mf->get_access_byte_mask() & mask,
+          std::bitset<SECTOR_CHUNCK_SIZE>().set(i), SECTOR_SIZE, mf->is_write(),
+          m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle, mf->get_wid(),
+          mf->get_sid(), mf->get_tpc(), mf, mf->get_streamID());
+
+      result.push_back(n_mf);
+    }
+  } else {
+    for (unsigned i = 0; i < SECTOR_CHUNCK_SIZE; i++) {
+      if (sector_mask.test(i)) {
+        mem_access_byte_mask_t mask;
+        for (unsigned k = i * SECTOR_SIZE; k < (i + 1) * SECTOR_SIZE; k++) {
+          mask.set(k);
+        }
+        mem_fetch *n_mf = m_wrbk_mf_allocator->alloc(
+            mf->get_addr() + SECTOR_SIZE * i, mf->get_access_type(),
+            mf->get_access_warp_mask(), mf->get_access_byte_mask() & mask,
+            std::bitset<SECTOR_CHUNCK_SIZE>().set(i), SECTOR_SIZE,
+            mf->is_write(), m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
+            mf->get_wid(), mf->get_sid(), mf->get_tpc(), mf,
+            mf->get_streamID());
+
+        result.push_back(n_mf);
+      }
+    }
+  }
+  return result;
+}
+
+
+
+// } pshyun
 
 void memory_sub_partition::print_cache_stat(unsigned &accesses,
                                             unsigned &misses) const {
@@ -761,6 +1503,7 @@ memory_sub_partition::breakdown_request_to_sector_requests(mem_fetch *mf) {
       result.push_back(n_mf);
     }
   } else {
+    // break down every sector
     for (unsigned i = 0; i < SECTOR_CHUNCK_SIZE; i++) {
       if (sector_mask.test(i)) {
         mem_access_byte_mask_t mask;
@@ -817,6 +1560,7 @@ mem_fetch *memory_sub_partition::pop() {
   if (mf && mf->isatomic()) mf->do_atomic();
   if (mf && (mf->get_access_type() == L2_WRBK_ACC ||
              mf->get_access_type() == L1_WRBK_ACC)) {
+    if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete10]\n");
     delete mf;
     mf = NULL;
   }
@@ -829,6 +1573,7 @@ mem_fetch *memory_sub_partition::top() {
              mf->get_access_type() == L1_WRBK_ACC)) {
     m_L2_icnt_queue->pop();
     m_request_tracker.erase(mf);
+    if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete11]\n");
     delete mf;
     mf = NULL;
   }
@@ -879,3 +1624,120 @@ void memory_sub_partition::visualizer_print(gzFile visualizer_file) {
 
   clear_L2cache_stats_pw();
 }
+
+// pshyun {
+class mem_fetch * memory_partition_unit::find_orig_mf(class mem_fetch *mf) {
+    mf_map::iterator e = mf_map_rvs.find(mf);
+    mem_fetch *mf_orig = nullptr;
+    if (e != mf_map_rvs.end())
+        mf_orig = mf_map_rvs[mf];
+    return mf_orig;
+}
+class mem_fetch * memory_partition_unit::create_new_mf(class mem_fetch *mf) {
+    mem_fetch *mf_new;
+    mf->set_l2_done(false);
+    mf->set_dram_done(false);
+    mf->set_cxl_req_type(CXL_INVALID);
+    mf->set_cxl_ret_path(CXL_NONE);
+    mf->set_ndc_resp(NDC_INVALID);
+    mf_new = new mem_fetch(*mf);
+    mf_map_rvs[mf_new] = mf;       // set mf_map
+    printf("[PSH_DEBUG][%d][mp%d][create_new_mf] mf_orig.uid: %d, mf_new.uid: %d\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid(), mf_new->get_request_uid());
+
+//YH_DEBUG:#ifdef YH_DEBUG
+    if ((mf->get_request_uid() == TGT_UID) || (mf_new->get_request_uid() == TGT_UID)) {
+        // if ((gpu_sim_cycle >= LOG_ST) && (gpu_sim_cycle <= LOG_ED)) {
+        printf("[YH_DEBUG][%d][mp%d][create_new_mf] mf_orig.uid: %d, mf_new.uid: %d\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid(), mf_new->get_request_uid());
+        mf->print(stdout);
+        mf_new->print(stdout);
+        //}
+    }
+//YH_DEBUG:#endif // YH_DEBUG
+    //TODO:printf("[YH_DEBUG][%d][mp%d][dram_acc_tracker] time:%d, addr: 0x%x\n", gpu_sim_cycle, m_id, gpu_sim_cycle, mf->get_addr()); // dram access tracker...
+    m_request_tracker_dram.insert(mf_new);
+    return mf_new;
+}
+void memory_partition_unit::set_orig_wrbk_mf_done(class mem_fetch *mf) {
+    mf_wrbk_tracker[mf] = 1; 
+}
+void memory_partition_unit::init_orig_wrbk_mf(class mem_fetch *mf) {
+    mf_wrbk_tracker[mf] = 0; 
+}
+void memory_partition_unit::clear_orig_wrbk_mf(class mem_fetch *mf) {
+    mf_wrbk_tracker.erase(mf); 
+}
+bool memory_partition_unit::find_orig_wrbk_mf(class mem_fetch* mf) {
+  auto it = mf_wrbk_tracker.find(mf);
+  if ( it != mf_wrbk_tracker.end() ) {
+      // key에 해당하는 요소가 있음
+      return true;
+  } else {
+      return false;
+  }
+}
+
+void memory_partition_unit::delete_new_mf(class mem_fetch *mf) {
+    mem_fetch *mf_orig;
+    if(m_id == 0) printf("[PSH_DEBUG]Check delete_new_mf\n");
+    mf_orig = find_orig_mf(mf);
+    if (mf_orig != nullptr) {
+        if (mf->get_l2_done() && mf->get_dram_done()){
+            printf("[YH_DEBUG][%d][mp%d][delete_new_mf] mf.uid: %d\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
+            mf_map_rvs.erase(mf);
+//YH_DEBUG:#ifdef YH_DEBUG
+            if ((mf->get_request_uid() == TGT_UID) || (mf_orig->get_request_uid() == TGT_UID)) {
+                // if ((gpu_sim_cycle >= LOG_ST) && (gpu_sim_cycle <= LOG_ED)) {
+                printf("[YH_DEBUG][%d][mp%d][delete_new_mf] mf.uid: %d\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
+                mf->print(stdout);
+                //}
+            }
+//YH_DEBUG:#endif  // YH_DEBUG
+            if (m_request_tracker_dram.find(mf) != m_request_tracker_dram.end()) {
+                m_request_tracker_dram.erase(mf);
+                if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete12]\n");
+                //delete mf;  // remove new mf (l2_done and dram_done) // FIXME
+            } else {
+                printf("[YH_DEBUG][%d][mp%d][delete_new_mf] mf.uid: %d. it is not in the request tracker, but try to delete.\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
+                //mf->print(stdout);
+                assert(0);
+                if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete13]\n");
+                delete mf;  // remove new mf (l2_done and dram_done)
+            }
+        }
+    } else {
+#ifdef YH_DEBUG
+        if (mf->get_request_uid() == TGT_UID) {
+            if ((m_gpu->gpu_sim_cycle >= LOG_ST) && (m_gpu->gpu_sim_cycle <= LOG_ED)) {
+                printf("[YH_DEBUG][%d][mp%d][delete_new_mf][for NDC_WR_ALLOC_R or NDC_WB] mf.uid: %d\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
+                mf->print(stdout);
+            }
+        }
+#endif  // YH_DEBUG
+        printf("[YH_DEBUG][%d][mp%d][delete_new_mf] mf.uid: %d\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
+        if (m_request_tracker_ndc.find(mf) != m_request_tracker_ndc.end()) {
+            if (m_request_tracker_dram.find(mf) != m_request_tracker_dram.end()) {
+                printf("[YH_DEBUG][%d][mp%d][delete_new_mf] mf.uid: %d. it is in the request tracker_dram. why?.\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
+                mf->print(stdout);
+                assert(0);
+                if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete14]\n");
+                delete mf;  // remove new mf (l2_done and dram_done)
+            }
+            m_request_tracker_ndc.erase(mf);
+            if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete15]\n");
+            delete mf;  // remove new mf from NDC WR_LINE_FILL
+        } else {
+            printf("[YH_DEBUG][%d][mp%d][delete_new_mf] mf.uid: %d. it is not in the request tracker_ndc, but try to delete.\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
+            mf->print(stdout);
+            assert(0);
+            if(m_id == 0) printf("[PSH_DEBUG][L2CAHCE][Check Delete16]\n");
+            delete mf;  // remove new mf (l2_done and dram_done)
+        }
+    }
+}
+
+void memory_partition_unit::print_returnq() const {
+    printf("[YH_DEBUG][%d][mp%d] Return Queue Information\n", m_gpu->gpu_sim_cycle, m_id);
+    printf("[YH_DEBUG][%d][mp%d] Return Queue Size: %d\n", m_gpu->gpu_sim_cycle, m_id, m_dram->returnq->get_length());
+    m_dram->print(stdout);
+}
+// } pshyun

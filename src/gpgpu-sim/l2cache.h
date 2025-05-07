@@ -33,7 +33,10 @@
 #define MC_PARTITION_INCLUDED
 
 #include "../abstract_hardware_model.h"
-#include "dram.h"
+// pshyun {
+//pshyun:#include "dram.h"
+#include "ndc.h"
+// } pshyun
 
 #include <list>
 #include <queue>
@@ -106,6 +109,18 @@ class memory_partition_unit {
 
   unsigned get_mpid() const { return m_id; }
 
+  // pshyun {
+  class mem_fetch* find_orig_mf(class mem_fetch* mf);
+  class mem_fetch* create_new_mf(class mem_fetch* mf);
+  void set_orig_wrbk_mf_done(class mem_fetch* mf);
+  void init_orig_wrbk_mf(class mem_fetch* mf);
+  void clear_orig_wrbk_mf(class mem_fetch* mf);
+  bool find_orig_wrbk_mf(class mem_fetch* mf);
+  void delete_new_mf(class mem_fetch* mf);
+  void print_mf_map() const;
+  void print_returnq() const;
+  // } pshyun   
+
   class gpgpu_sim *get_mgpu() const { return m_gpu; }
 
  private:
@@ -113,7 +128,14 @@ class memory_partition_unit {
   const memory_config *m_config;
   class memory_stats_t *m_stats;
   class memory_sub_partition **m_sub_partition;
-  class dram_t *m_dram;
+  // pshyun {
+  // pshyun:class dram_t *m_dram;
+ public:
+   class ndc_t *m_dram;
+
+ private:
+   partition_mf_allocator *m_wrbk_mf_allocator;
+   // } pshyun
 
   class arbitration_metadata {
    public:
@@ -155,6 +177,57 @@ class memory_partition_unit {
   std::list<dram_delay_t> m_dram_latency_queue;
 
   class gpgpu_sim *m_gpu;
+  
+  // pshyun {
+  std::list<dram_delay_t> m_dram_latency_queue_from_cxl;
+  std::list<dram_delay_t> m_cxl_latency_queue;
+
+  fifo_pipeline<mem_fetch> *m_ndc_fill_queue;
+  fifo_pipeline<mem_fetch> *m_dram_cxl_queue;
+
+  // interface to ndc_fill_queue
+  bool ndc_fill_queue_empty() const; 
+  class mem_fetch* ndc_fill_queue_top() const; 
+  void ndc_fill_queue_pop(); 
+  bool ndc_fill_queue_full() const; 
+  void ndc_fill_queue_push( class mem_fetch* mf ); 
+
+  // interface to dram_cxl_queue
+  bool dram_cxl_queue_empty() const; 
+  bool dram_cxl_queue_full() const; 
+  void dram_cxl_queue_push( class mem_fetch* mf );
+  class mem_fetch* dram_cxl_queue_top() const; 
+  void dram_cxl_queue_pop();
+
+  std::vector<mem_fetch *> breakdown_wrbk_request_to_sector_requests(mem_fetch *mf);
+
+  typedef std::map<mem_fetch *, mem_fetch *> mf_map;
+  typedef std::map<mem_fetch *, int> wrbk_tracker;
+  mf_map mf_map_rvs;
+  wrbk_tracker mf_wrbk_tracker;
+  std::set<mem_fetch*> m_request_tracker_dram;
+  std::set<mem_fetch*> m_request_tracker_ndc;
+
+ public:
+  unsigned int dram_total_cycle_cnt;
+  unsigned int dram_acc_cnt;
+  unsigned int dram_acc_from_l2_cnt;
+  unsigned int dram_acc_from_cxl_cnt;
+  unsigned int queue_full_cnt_returnq_cache_cycle;
+  unsigned int queue_full_cnt_returnq_fill_cycle;
+  unsigned int queue_full_cnt_returnq_ndc_cycle;
+  unsigned int queue_full_cnt_ndc_fill_q;
+  unsigned int queue_full_cnt_dram_cxl_q;
+  unsigned int queue_full_cnt_mrqq;
+  unsigned int queue_full_cnt_fill_mrqq;
+  unsigned int ndc_hit_cnt;
+  unsigned int ndc_miss_cnt;
+  unsigned int ndc_rsv_fail_cnt;
+  unsigned int ndc_evict_cnt;
+  unsigned int ndc_data_port_busy_cnt;
+  unsigned int ndc_fill_port_busy_cnt;
+  unsigned int print_flag;
+  // } pshyun
 };
 
 class memory_sub_partition {
@@ -220,13 +293,18 @@ class memory_sub_partition {
     class mem_fetch *req;
   };
   std::queue<rop_delay_t> m_rop;
-
+ 
+ // pshyun {
+ public:
   // these are various FIFOs between units within a memory partition
   fifo_pipeline<mem_fetch> *m_icnt_L2_queue;
   fifo_pipeline<mem_fetch> *m_L2_dram_queue;
   fifo_pipeline<mem_fetch> *m_dram_L2_queue;
   fifo_pipeline<mem_fetch> *m_L2_icnt_queue;  // L2 cache hit response queue
+  unsigned print_flag;
+ // } pshyun
 
+ private:
   class mem_fetch *L2dramout;
   unsigned long long int wb_addr;
 

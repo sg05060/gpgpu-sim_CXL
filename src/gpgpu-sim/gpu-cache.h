@@ -901,6 +901,7 @@ class cache_config {
   friend class data_cache;
   friend class l1_cache;
   friend class l2_cache;
+  friend class l3_ndc_cache; // pshyun
   friend class memory_sub_partition;
 };
 
@@ -942,6 +943,18 @@ class l2_cache_config : public cache_config {
  private:
   linear_to_raw_address_translation *m_address_mapping;
 };
+
+// pshyun {
+class l3_ndc_cache_config : public cache_config {
+ public:
+  l3_ndc_cache_config() : cache_config() {}
+  void init(linear_to_raw_address_translation *address_mapping);
+  virtual unsigned set_index(new_addr_type addr) const;
+
+ private:
+  linear_to_raw_address_translation *m_address_mapping;
+};
+// } pshyun
 
 class tag_array {
  public:
@@ -1207,7 +1220,7 @@ class cache_stats {
   void clear();
   // Clear AerialVision cache stats after each window
   void clear_pw();
-  void inc_stats(int access_type, int access_outcome,
+  void inc_stats(mem_fetch* mf, int access_type, int access_outcome,
                  unsigned long long streamID);
   // Increment AerialVision cache stats
   void inc_stats_pw(int access_type, int access_outcome,
@@ -1425,7 +1438,10 @@ class baseline_cache : public cache_t {
 
   typedef std::map<mem_fetch *, extra_mf_fields> extra_mf_fields_lookup;
 
+//yhyang: protected->public
+public:
   extra_mf_fields_lookup m_extra_mf_fields;
+protected:
 
   cache_stats m_stats;
 
@@ -1740,6 +1756,24 @@ class l2_cache : public data_cache {
                                            unsigned time,
                                            std::list<cache_event> &events);
 };
+
+// pshyun {
+class l3_ndc_cache : public data_cache {
+ public:
+  l3_ndc_cache(const char *name, cache_config &config, int core_id, int type_id,
+           mem_fetch_interface *memport, mem_fetch_allocator *mfcreator,
+           enum mem_fetch_status status, class gpgpu_sim *gpu,
+           enum cache_gpu_level level)
+      : data_cache(name, config, core_id, type_id, memport, mfcreator, status,
+                   NDC_WR_ALLOC_R, NDC_WRBK_ACC, gpu, level) {}
+
+  virtual ~l3_ndc_cache() {}
+
+  virtual enum cache_request_status access(new_addr_type addr, mem_fetch *mf,
+                                           unsigned time,
+                                           std::list<cache_event> &events);
+};
+// } pshyun
 
 /*****************************************************************************/
 

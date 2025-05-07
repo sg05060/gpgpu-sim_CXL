@@ -116,6 +116,7 @@ class dram_t {
          class gpgpu_sim *gpu);
 
   bool full(bool is_write) const;
+  bool afull(bool is_write, int threshold) const;
   void print(FILE *simFile) const;
   void visualize() const;
   void print_stat(FILE *simFile);
@@ -128,7 +129,11 @@ class dram_t {
   class mem_fetch *return_queue_top();
 
   void push(class mem_fetch *data);
-  void cycle();
+  
+  // pshyun
+  // void cycle();
+  virtual void cycle();
+
   void dram_log(int task);
 
   class memory_partition_unit *m_memory_partition_unit;
@@ -142,7 +147,9 @@ class dram_t {
 
   const memory_config *m_config;
 
- private:
+  // pshyun
+  // private:
+ public:
   bankgrp_t **bkgrp;
 
   bank_t **bk;
@@ -152,6 +159,7 @@ class dram_t {
 
   void scheduler_fifo();
   void scheduler_frfcfs();
+  void scheduler_fffrfcfs(); // pshyun
 
   bool issue_col_command(int j);
   bool issue_row_command(int j);

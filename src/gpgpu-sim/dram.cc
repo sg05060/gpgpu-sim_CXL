@@ -178,6 +178,23 @@ bool dram_t::full(bool is_write) const {
     return mrqq->full();
 }
 
+bool dram_t::afull(bool is_write, int threshold) const {
+  if (m_config->scheduler_type == DRAM_FRFCFS) {
+    if (m_config->gpgpu_frfcfs_dram_sched_queue_size == 0) return false;
+    if (m_config->seperate_write_queue_enabled) {
+      if (is_write)
+        return m_frfcfs_scheduler->num_write_pending() >=
+               m_config->gpgpu_frfcfs_dram_write_queue_size;
+      else
+        return m_frfcfs_scheduler->num_pending() >=
+               m_config->gpgpu_frfcfs_dram_sched_queue_size;
+    } else
+      return (m_frfcfs_scheduler->num_pending() + threshold) >=
+             m_config->gpgpu_frfcfs_dram_sched_queue_size;
+  } else
+    return mrqq->full();
+}
+
 unsigned dram_t::que_length() const {
   unsigned nreqs = 0;
   if (m_config->scheduler_type == DRAM_FRFCFS) {
@@ -254,6 +271,7 @@ void dram_t::push(class mem_fetch *data) {
 
   data->set_status(IN_PARTITION_MC_INTERFACE_QUEUE,
                    m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+  if(id==0) printf("[PSH_DEBUG][dram_t::push_from_l2] %d\n", mrq->data->get_request_uid());
   mrqq->push(mrq);
 
   // stats...

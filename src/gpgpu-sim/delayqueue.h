@@ -35,6 +35,7 @@
 
 #include "../statwrapper.h"
 #include "gpu-misc.h"
+#include <algorithm> //pshyun
 
 template <class T>
 struct fifo_data {
@@ -54,6 +55,9 @@ class fifo_pipeline {
     m_n_element = 0;
     m_head = NULL;
     m_tail = NULL;
+
+    m_stat_max_len = 0; // pshyun for checking maximum length during run-time
+
     for (unsigned i = 0; i < m_min_len; i++) push(NULL);
   }
 
@@ -81,6 +85,8 @@ class fifo_pipeline {
     }
     m_tail->m_next = NULL;
     m_tail->m_data = data;
+
+    m_stat_max_len = std::max<size_t>(m_stat_max_len, m_length); //pshyun
   }
 
   T* pop() {
@@ -162,6 +168,9 @@ class fifo_pipeline {
   unsigned get_length() const { return m_length; }
   unsigned get_max_len() const { return m_max_len; }
 
+  // pshyun
+  unsigned int get_m_stat_max_len() const { return m_stat_max_len; }
+
   void print() const {
     fifo_data<T>* ddp = m_head;
     printf("%s(%d): ", m_name, m_length);
@@ -182,6 +191,8 @@ class fifo_pipeline {
 
   fifo_data<T>* m_head;
   fifo_data<T>* m_tail;
+
+  unsigned int m_stat_max_len;  // pshyun for checking maximum length during run-time
 };
 
 #endif

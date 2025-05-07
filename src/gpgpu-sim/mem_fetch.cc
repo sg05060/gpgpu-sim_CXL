@@ -76,7 +76,57 @@ mem_fetch::mem_fetch(const mem_access_t &access, const warp_inst_t *inst,
     m_raw_addr.chip = m_original_mf->get_tlx_addr().chip;
     m_raw_addr.sub_partition = m_original_mf->get_tlx_addr().sub_partition;
   }
+  // pshyun {
+  m_cxl_req_type = CXL_INVALID;
+  m_cxl_ret_path = CXL_NONE;
+  m_ndc_resp = NDC_INVALID;
+
+  l2_done = false;
+  dram_done = false;
+  // } pshyun
 }
+
+// pshyun {
+mem_fetch::mem_fetch(const mem_fetch &other) : m_access(other.m_access)
+{
+  //m_request_uid = sm_next_mf_request_uid++;
+  m_request_uid = other.m_request_uid;
+  m_access = other.m_access;
+  m_inst = other.m_inst;
+  m_streamID = other.m_streamID;
+  m_data_size = other.m_data_size;
+  m_ctrl_size = other.m_ctrl_size;
+  m_sid = other.m_sid;
+  m_tpc = other.m_tpc;
+  m_wid = other.m_wid;
+  m_raw_addr = other.m_raw_addr;
+  m_partition_addr = other.m_partition_addr;
+  m_type = other.m_type;
+  m_timestamp = other.m_timestamp2; //pshyun : FIXME, mem_fetch dose not have m_gpu
+  m_timestamp2 = other.m_timestamp2;
+  m_status = other.m_status;
+  m_status_change = other.m_status_change;
+  m_mem_config = other.m_mem_config;
+
+  icnt_flit_size = other.icnt_flit_size;
+
+  original_mf = other.original_mf;
+  original_wr_mf = other.original_wr_mf;
+
+  if(other.original_mf) {
+    //printf("[PSH_DEBUG] Find Error\n");
+    m_raw_addr.chip = other.original_mf->get_tlx_addr().chip;
+    m_raw_addr.sub_partition = other.original_mf->get_tlx_addr().sub_partition;
+  }
+
+  m_cxl_req_type = other.m_cxl_req_type;
+  m_cxl_ret_path = other.m_cxl_ret_path;
+  m_ndc_resp = other.m_ndc_resp;
+
+  l2_done = other.l2_done;
+  dram_done = other.dram_done;
+}
+// } pshyun
 
 mem_fetch::~mem_fetch() { m_status = MEM_FETCH_DELETED; }
 
@@ -146,3 +196,63 @@ unsigned mem_fetch::get_num_flits(bool simt_to_mem) {
 
   return (sz / icnt_flit_size) + ((sz % icnt_flit_size) ? 1 : 0);
 }
+
+
+// pshyun {
+void mem_fetch::set_cxl_req_type(mf_cxl_req_type req_type) {
+    m_cxl_req_type = req_type;
+    return;
+}
+mf_cxl_req_type mem_fetch::get_cxl_req_type() const {
+    return m_cxl_req_type;
+}
+void mem_fetch::set_cxl_ret_path(mf_cxl_ret_path ret_path) {
+    m_cxl_ret_path = ret_path;
+}
+mf_cxl_ret_path mem_fetch::get_cxl_ret_path() const {
+    return m_cxl_ret_path;
+}
+void mem_fetch::set_ndc_resp(mf_ndc_resp_type ndc_resp) {
+    m_ndc_resp = ndc_resp;
+    return;
+}
+mf_ndc_resp_type mem_fetch::get_ndc_resp() const {
+    return m_ndc_resp;
+}
+const char *mem_fetch::cxl_req_type_to_str(mf_cxl_req_type type) const {
+    if     (type == CXL_INVALID) return "CXL_INVALID";
+    else if(type == CXL_RD_PREFETCH) return "CXL_RD_PREFETCH";
+    else if(type == CXL_RD_PREDICT) return "CXL_RD_PREDICT";
+    else if(type == CXL_RD_LINE_FILL) return "CXL_RD_LINE_FILL";
+    else if(type == CXL_WR_LINE_FILL) return "CXL_WR_LINE_FILL";
+    //pshyun:else if(type == CXL_WR_LINE_FILL_NEW) return "CXL_WR_LINE_FILL_NEW";
+    else if(type == CXL_WB) return "CXL_WB";
+    else return "CXL_REQ_TYPE_UNDEFINED";
+}
+const char *mem_fetch::cxl_ret_path_to_str(mf_cxl_ret_path type) const {
+    if     (type == CXL_NONE) return "CXL_NONE";
+    else if(type == CXL_L2) return "CXL_L2";
+    else if(type == CXL_DRAM) return "CXL_DRAM";
+    else if(type == CXL_L2_DRAM) return "CXL_L2_DRAM";
+    else return "CXL_RET_PATH_UNDEFINED";
+}
+const char *mem_fetch::ndc_resp_type_to_str(mf_ndc_resp_type type) const {
+    if     (type == NDC_INVALID) return "NDC_INVALID";
+    else if(type == NDC_HIT) return "NDC_HIT";
+    else if(type == NDC_MISS) return "NDC_MISS";
+    //pshyun:else if(type == NDC_EVICT) return "NDC_EVICT";
+    else if(type == NDC_FILL_DONE) return "NDC_FILL_DONE";
+    else return "NDC_RESP_TYPE_UNDEFINED";
+}
+void mem_fetch::set_l2_done(bool tf) {
+    l2_done = tf;
+}
+void mem_fetch::set_dram_done(bool tf) {
+    dram_done = tf;
+}
+void mem_fetch::set_type_to_write() {
+    m_type = WRITE_REQUEST;
+    m_access.m_type = NDC_LINEFILL_W;  // TODO
+    m_access.m_write = true;           // TODO
+}
+//} pshyun

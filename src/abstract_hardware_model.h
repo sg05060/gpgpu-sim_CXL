@@ -759,13 +759,16 @@ const unsigned SECTOR_SIZE = 32;        // sector is 32 bytes width
 typedef std::bitset<SECTOR_CHUNCK_SIZE> mem_access_sector_mask_t;
 #define NO_PARTIAL_WRITE (mem_access_byte_mask_t())
 
+// pshyun : add request type {NDC_WRBK_ACC, NDC_WR_ALLOC_R, NDC_LINEFILL_W}
 #define MEM_ACCESS_TYPE_TUP_DEF                                         \
   MA_TUP_BEGIN(mem_access_type)                                         \
   MA_TUP(GLOBAL_ACC_R), MA_TUP(LOCAL_ACC_R), MA_TUP(CONST_ACC_R),       \
       MA_TUP(TEXTURE_ACC_R), MA_TUP(GLOBAL_ACC_W), MA_TUP(LOCAL_ACC_W), \
       MA_TUP(L1_WRBK_ACC), MA_TUP(L2_WRBK_ACC), MA_TUP(INST_ACC_R),     \
       MA_TUP(L1_WR_ALLOC_R), MA_TUP(L2_WR_ALLOC_R),                     \
-      MA_TUP(NUM_MEM_ACCESS_TYPE) MA_TUP_END(mem_access_type)
+      MA_TUP(NDC_WRBK_ACC), MA_TUP(NDC_WR_ALLOC_R),                     \
+      MA_TUP(NDC_LINEFILL_W), MA_TUP(NUM_MEM_ACCESS_TYPE)               \
+  MA_TUP_END(mem_access_type)
 
 #define MA_TUP_BEGIN(X) enum X {
 #define MA_TUP(X) X
@@ -862,6 +865,23 @@ class mem_access_t {
       case L1_WRBK_ACC:
         fprintf(fp, "L1_WRBK ");
         break;
+      case L1_WR_ALLOC_R:
+        fprintf(fp, "L1_WR_ALLOC ");
+        break;
+      case L2_WR_ALLOC_R:
+        fprintf(fp, "L2_WR_ALLOC ");
+        break;
+      // pshyun {
+      case NDC_LINEFILL_W:
+        fprintf(fp,"NDC_LINEFILL_W "); 
+        break;
+      case NDC_WRBK_ACC:
+        fprintf(fp,"NDC_WRBK_ACC "); 
+        break;
+      case NDC_WR_ALLOC_R:
+        fprintf(fp,"NDC_WR_ALLOC_R "); 
+        break;
+      // } pshyun
       default:
         fprintf(fp, "unknown ");
         break;
@@ -870,7 +890,10 @@ class mem_access_t {
 
   gpgpu_context *gpgpu_ctx;
 
- private:
+// pshyun {
+//pshyun:private:
+public:
+// } pshyun
   void init(gpgpu_context *ctx);
 
   unsigned m_uid;

@@ -31,7 +31,10 @@
 
 #include <list>
 #include <map>
-#include "dram.h"
+// pshyun {
+//pshyun:#include "dram.h"
+#include "ndc.h"
+// } pshyun
 #include "gpu-misc.h"
 #include "gpu-sim.h"
 #include "shader.h"

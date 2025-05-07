@@ -169,6 +169,24 @@ unsigned l2_cache_config::set_index(new_addr_type addr) const {
   return cache_config::set_index(part_addr);
 }
 
+// pshyun {
+void l3_ndc_cache_config::init(linear_to_raw_address_translation *address_mapping) {
+  cache_config::init(m_config_string, FuncCachePreferNone);
+  m_address_mapping = address_mapping;
+}
+unsigned l3_ndc_cache_config::set_index(new_addr_type addr) const {
+  new_addr_type part_addr = addr;
+
+  if (m_address_mapping) {
+    // Calculate set index without memory partition bits to reduce set camping
+    part_addr = m_address_mapping->partition_address(addr);
+  }
+
+  return cache_config::set_index(part_addr);
+}
+// } pshyun
+
+
 tag_array::~tag_array() {
   unsigned cache_lines_num = m_config.get_max_num_lines();
   for (unsigned i = 0; i < cache_lines_num; ++i) delete m_lines[i];
@@ -659,25 +677,26 @@ void cache_stats::clear_pw() {
   m_stats_pw.clear();
 }
 
-void cache_stats::inc_stats(int access_type, int access_outcome,
+void cache_stats::inc_stats(mem_fetch* mf, int access_type, int access_outcome,
                             unsigned long long streamID) {
   ///
   /// Increment the stat corresponding to (access_type, access_outcome) by 1.
   ///
-  if (!check_valid(access_type, access_outcome))
-    assert(0 && "Unknown cache access type or access outcome");
-
-  if (m_stats.find(streamID) == m_stats.end()) {
-    std::vector<std::vector<unsigned long long>> new_val;
-    new_val.resize(NUM_MEM_ACCESS_TYPE);
-    for (unsigned j = 0; j < NUM_MEM_ACCESS_TYPE; ++j) {
-      new_val[j].resize(NUM_CACHE_REQUEST_STATUS, 0);
-    }
-    m_stats.insert(std::pair<unsigned long long,
-                             std::vector<std::vector<unsigned long long>>>(
-        streamID, new_val));
+  if (!check_valid(access_type, access_outcome)) {
+    assert(0 && "Unknown cache access type or access outcome"); 
   }
-  m_stats.at(streamID)[access_type][access_outcome]++;
+
+  // if (m_stats.find(streamID) == m_stats.end()) {
+  //   std::vector<std::vector<unsigned long long>> new_val;
+  //   new_val.resize(NUM_MEM_ACCESS_TYPE);
+  //   for (unsigned j = 0; j < NUM_MEM_ACCESS_TYPE; ++j) {
+  //     new_val[j].resize(NUM_CACHE_REQUEST_STATUS, 0);
+  //   }
+  //   m_stats.insert(std::pair<unsigned long long,
+  //                            std::vector<std::vector<unsigned long long>>>(
+  //       streamID, new_val));
+  // }
+  // m_stats.at(streamID)[access_type][access_outcome]++;
 }
 
 void cache_stats::inc_stats_pw(int access_type, int access_outcome,
@@ -1238,12 +1257,14 @@ void baseline_cache::fill(mem_fetch *mf, unsigned time) {
 
     if (e->second.pending_read > 0) {
       // wait for the other requests to come back
-      delete mf;
+      printf("[PSH_DEBUG]delete_mf1 : uid : %d", mf->get_request_uid());
+      delete mf; 
       return;
     } else {
       mem_fetch *temp = mf;
       mf = mf->get_original_mf();
-      delete temp;
+      printf("[PSH_DEBUG]delete_mf2 : uid : %d", temp->get_request_uid());
+      delete temp; 
     }
   }
 
@@ -1298,11 +1319,11 @@ void baseline_cache::inc_aggregated_stats(cache_request_status status,
                                           mem_fetch *mf,
                                           enum cache_gpu_level level) {
   if (level == L1_GPU_CACHE) {
-    m_gpu->aggregated_l1_stats.inc_stats(
+    m_gpu->aggregated_l1_stats.inc_stats(mf,
         mf->get_streamID(), mf->get_access_type(),
         m_gpu->aggregated_l1_stats.select_stats_status(status, cache_status));
   } else if (level == L2_GPU_CACHE) {
-    m_gpu->aggregated_l2_stats.inc_stats(
+    m_gpu->aggregated_l2_stats.inc_stats(mf,
         mf->get_streamID(), mf->get_access_type(),
         m_gpu->aggregated_l2_stats.select_stats_status(status, cache_status));
   }
@@ -1368,7 +1389,7 @@ void baseline_cache::send_read_request(new_addr_type addr,
       m_tag_array->access(block_addr, time, cache_index, wb, evicted, mf);
 
     m_mshrs.add(mshr_addr, mf);
-    m_stats.inc_stats(mf->get_access_type(), MSHR_HIT, mf->get_streamID());
+    m_stats.inc_stats(mf, mf->get_access_type(), MSHR_HIT, mf->get_streamID());
     do_miss = true;
 
   } else if (!mshr_hit && mshr_avail &&
@@ -1914,7 +1935,7 @@ enum cache_request_status read_only_cache::access(
                            mf->get_streamID());
   }
 
-  m_stats.inc_stats(mf->get_access_type(),
+  m_stats.inc_stats(mf, mf->get_access_type(),
                     m_stats.select_stats_status(status, cache_status),
                     mf->get_streamID());
   m_stats.inc_stats_pw(mf->get_access_type(),
@@ -1977,7 +1998,9 @@ enum cache_request_status data_cache::process_tag_probe(
 enum cache_request_status data_cache::access(new_addr_type addr, mem_fetch *mf,
                                              unsigned time,
                                              std::list<cache_event> &events) {
-  assert(mf->get_data_size() <= m_config.get_atom_sz());
+  if(mf->get_data_size() > m_config.get_atom_sz()) {printf("[PSH_DEBUG]cache_access bigger than 32B\n"); mf->print(stdout);}
+  assert(mf->get_data_size() <= m_config.get_atom_sz()); //FIXME
+
   bool wr = mf->get_is_write();
   new_addr_type block_addr = m_config.block_addr(addr);
   unsigned cache_index = (unsigned)-1;
@@ -1985,7 +2008,7 @@ enum cache_request_status data_cache::access(new_addr_type addr, mem_fetch *mf,
       m_tag_array->probe(block_addr, cache_index, mf, mf->is_write(), true);
   enum cache_request_status access_status =
       process_tag_probe(wr, probe_status, addr, cache_index, mf, time, events);
-  m_stats.inc_stats(mf->get_access_type(),
+  m_stats.inc_stats(mf, mf->get_access_type(),
                     m_stats.select_stats_status(probe_status, access_status),
                     mf->get_streamID());
   m_stats.inc_stats_pw(mf->get_access_type(),
@@ -2012,6 +2035,14 @@ enum cache_request_status l2_cache::access(new_addr_type addr, mem_fetch *mf,
                                            std::list<cache_event> &events) {
   return data_cache::access(addr, mf, time, events);
 }
+
+// pshyun {
+enum cache_request_status l3_ndc_cache::access(new_addr_type addr, mem_fetch *mf,
+                                           unsigned time,
+                                           std::list<cache_event> &events) {
+  return data_cache::access(addr, mf, time, events);
+}
+// } pshyun
 
 /// Access function for tex_cache
 /// return values: RESERVATION_FAIL if request could not be accepted
@@ -2051,7 +2082,7 @@ enum cache_request_status tex_cache::access(new_addr_type addr, mem_fetch *mf,
     // the value *will* *be* in the cache already
     cache_status = HIT_RESERVED;
   }
-  m_stats.inc_stats(mf->get_access_type(),
+  m_stats.inc_stats(mf, mf->get_access_type(),
                     m_stats.select_stats_status(status, cache_status),
                     mf->get_streamID());
   m_stats.inc_stats_pw(mf->get_access_type(),

@@ -40,6 +40,30 @@ enum mf_type {
   WRITE_ACK
 };
 
+// pshyun {
+enum mf_cxl_req_type {
+    CXL_INVALID = 0,
+    CXL_RD_PREFETCH = 1,
+    CXL_RD_PREDICT = 2,
+    CXL_RD_LINE_FILL = 3,
+    CXL_WR_LINE_FILL = 4,
+    //pshyun:CXL_WR_LINE_FILL_NEW = 5,
+    CXL_WB = 6
+};
+enum mf_cxl_ret_path {
+    CXL_NONE = 0,
+    CXL_L2 = 1,
+    CXL_DRAM = 2,
+    CXL_L2_DRAM = 3
+};
+enum mf_ndc_resp_type {
+    NDC_INVALID = 0,
+    NDC_HIT = 1,
+    NDC_MISS = 2,
+    NDC_FILL_DONE = 3
+};
+// } pshyun
+
 #define MF_TUP_BEGIN(X) enum X {
 #define MF_TUP(X) X
 #define MF_TUP_END(X) \
@@ -58,6 +82,9 @@ class mem_fetch {
             unsigned sid, unsigned tpc, const memory_config *config,
             unsigned long long cycle, mem_fetch *original_mf = NULL,
             mem_fetch *original_wr_mf = NULL);
+
+  mem_fetch(const mem_fetch &other);  //pshyun added for cloning
+
   ~mem_fetch();
 
   void set_status(enum mem_fetch_status status, unsigned long long cycle);
@@ -72,6 +99,24 @@ class mem_fetch {
       m_type = WRITE_ACK;
     }
   }
+
+  // pshyun {
+  void             set_cxl_req_type(mf_cxl_req_type req_type);
+  mf_cxl_req_type  get_cxl_req_type() const;
+  void             set_cxl_ret_path(mf_cxl_ret_path ret_path);
+  mf_cxl_ret_path  get_cxl_ret_path() const;
+  void             set_ndc_resp(mf_ndc_resp_type ndc_resp);
+  mf_ndc_resp_type get_ndc_resp() const;
+  const char *cxl_req_type_to_str(mf_cxl_req_type type) const;
+  const char *cxl_ret_path_to_str(mf_cxl_ret_path type) const;
+  const char *ndc_resp_type_to_str(mf_ndc_resp_type type) const;
+  void             set_l2_done(bool);
+  void             set_dram_done(bool);
+  bool             get_l2_done() const { return l2_done; };
+  bool             get_dram_done() const { return dram_done; };
+  void             set_type_to_write();
+  //} pshyun
+
   void do_atomic();
 
   void print(FILE *fp, bool print_inst = true) const;
@@ -178,6 +223,14 @@ class mem_fetch {
                      // size), so the pointer refers to the original request
   mem_fetch *original_wr_mf;  // this pointer refers to the original write req,
                               // when fetch-on-write policy is used
+
+  // pshyun {
+  mf_cxl_req_type  m_cxl_req_type;
+  mf_cxl_ret_path  m_cxl_ret_path;
+  mf_ndc_resp_type m_ndc_resp;
+  bool l2_done;
+  bool dram_done;
+  // } pshyun
 };
 
 #endif
