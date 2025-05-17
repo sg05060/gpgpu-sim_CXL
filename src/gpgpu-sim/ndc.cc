@@ -222,7 +222,7 @@ void ndc_t::cache_cycle(/*unsigned cycle*/) {
                            mf->get_addr(), mf->get_status());
                     mf->print(stdout);
                 }
-                printf("[PSH_DEBUG][Check Delete0]\n");
+                //printf("[PSH_DEBUG][Check Delete0]\n");
                 delete mf;
             } else {
                 mf->set_status(IN_PARTITION_MC_RETURNQ, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
@@ -279,7 +279,7 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
    // yhyang {
    // when NDC is enabled
    if (!m_config->m_L3_NDC_config.disabled()) {
-       printf("[PSH_DEBUG]ndc_access uid : %d, access_type : %d req_type : %d\n", data->get_request_uid(), data->get_access_type(), data->get_cxl_req_type());
+       //printf("[PSH_DEBUG]ndc_access uid : %d, access_type : %d req_type : %d\n", data->get_request_uid(), data->get_access_type(), data->get_cxl_req_type());
        std::list<cache_event> events;
        unsigned cache_index = (unsigned)-1;
 
@@ -316,7 +316,7 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
                }
 
                if (status == HIT) {
-                   printf("[YH_DEBUG][ndc_access==HIT] mf.uid: %d\n", data->get_request_uid());
+                   //printf("[YH_DEBUG][ndc_access==HIT] mf.uid: %d\n", data->get_request_uid());
                    m_memory_partition_unit->ndc_hit_cnt += 1;
                    data->set_ndc_resp(NDC_HIT);
                    data->set_cxl_ret_path(CXL_L2);
@@ -334,7 +334,7 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
                        data->set_ndc_resp(NDC_MISS);
                        data->set_cxl_req_type(CXL_RD_LINE_FILL);
                        data->set_cxl_ret_path(CXL_L2_DRAM);
-                       printf("[PSH_DEBUG][ndc_access==MISS] mf.uid: %d, is_write : %d\n", data->get_request_uid(), data->is_write());
+                       //printf("[PSH_DEBUG][ndc_access==MISS] mf.uid: %d, is_write : %d\n", data->get_request_uid(), data->is_write());
                    
                        // m_return_queue.push(data);
                        data->set_reply();
@@ -344,7 +344,7 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
                        data->set_ndc_resp(NDC_MISS);
                        data->set_cxl_req_type(CXL_INVALID);
                        data->set_cxl_ret_path(CXL_NONE);
-                       printf("[PSH_DEBUG][ndc_access==MISS] mf.uid: %d, is_write : %d\n", data->get_request_uid(), data->is_write());
+                       //printf("[PSH_DEBUG][ndc_access==MISS] mf.uid: %d, is_write : %d\n", data->get_request_uid(), data->is_write());
                    
                    } else {
                        printf("[YH_DEBUG][NDC%d] Error: invalid access type got NDC MISS. access_type = %d \n", id, data->get_access_type());
@@ -418,10 +418,10 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
            returnq->push(data);
        } else {
            m_memory_partition_unit->set_done(data);
-           printf("[PSH_DEBUG][Check Delete1]\n");
+           //printf("[PSH_DEBUG][Check Delete1]\n");
            delete data;
        }
-       printf("[PSH_DEBUG][Check Delete2]\n");
+       //printf("[PSH_DEBUG][Check Delete2]\n");
        delete cmd;
        rm_cmd_flag = false;
    }
@@ -435,7 +435,7 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
 #endif // YH_DEBUG
       mem_fetch* check_mf = cmd->data;
       delete cmd;
-      printf("[PSH_DEBUG][Check Delete3] Checking logic uid %d access_type : %d\n", check_mf->get_request_uid(), check_mf->get_access_type());
+      //printf("[PSH_DEBUG][Check Delete3] Checking logic uid %d access_type : %d\n", check_mf->get_request_uid(), check_mf->get_access_type());
    }
 }
 
@@ -511,12 +511,12 @@ void ndc_t::cycle() {
     if (!returnq_full() && !dram_ndc_fill_queue->empty()) {
         if (!m_config->m_L3_NDC_config.disabled()) {
             dram_req_t *cmd = dram_ndc_fill_queue->pop();
-            printf("[PSH_DEBUG][ndc_fill_access] uid: %d, ret = %d, req = %d\n", cmd->data->get_request_uid(), cmd->data->get_cxl_req_type(), cmd->data->get_cxl_ret_path());
+            //printf("[PSH_DEBUG][ndc_fill_access] uid: %d, ret = %d, req = %d\n", cmd->data->get_request_uid(), cmd->data->get_cxl_req_type(), cmd->data->get_cxl_ret_path());
             
             bool fill_success = ndc_fill_access(cmd);
             //printf("[PSH_DEBUG][ndc_fill_access] uid: %d, ret = %d, req = %d\n", cmd->data->get_request_uid(), cmd->data->get_cxl_req_type(), cmd->data->get_cxl_ret_path());
             if (fill_success) {
-                printf("[PSH_DEBUG][Check Delete4]\n");
+                //printf("[PSH_DEBUG][Check Delete4]\n");
                 delete cmd;
             }
         }
@@ -799,7 +799,7 @@ void ndc_t::cycle() {
 void ndc_t::push_from_cxl(class mem_fetch *data) {
 
 
-    printf("[PSH_DEBUG][dram_t::push_from_cxl] u_id: 0x%x, chipid: 0x%x\n", data->get_request_uid(), data->get_tlx_addr().chip);
+    //printf("[PSH_DEBUG][dram_t::push_from_cxl] u_id: 0x%x, chipid: 0x%x\n", data->get_request_uid(), data->get_tlx_addr().chip);
                                       
     assert(id == data->get_tlx_addr().chip);  // Ensure request is in correct memory partition
 
@@ -853,7 +853,7 @@ void ndc_t::scheduler_fffrfcfs() {
 
         req->data->set_status(IN_PARTITION_MC_INPUT_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
         sched->add_req(req);
-        printf("[PSH_DEBUG]fill_mrqq->pop and add to sched : uid %d\n", req->data->get_request_uid());
+        //printf("[PSH_DEBUG]fill_mrqq->pop and add to sched : uid %d\n", req->data->get_request_uid());
     }
     while (!mrqq->empty() && (!m_config->gpgpu_frfcfs_dram_sched_queue_size || sched->num_pending() < m_config->gpgpu_frfcfs_dram_sched_queue_size)) {
         dram_req_t *req = mrqq->pop();
@@ -882,8 +882,8 @@ void ndc_t::scheduler_fffrfcfs() {
         if (!bk[b]->mrq) {
             req = sched->schedule(b, bk[b]->curr_row);
             if (req) {
-                if(req->data->get_access_type() == NDC_LINEFILL_W)
-                    if(id==0) printf("[YH_DEBUG][mp%d][scheduler_fffrfcfs] bank scheduling. bank: %d, uid: %d access_t %d\n", id, b, req->data->get_request_uid(), req->data->get_access_type());
+                //if(req->data->get_access_type() == NDC_LINEFILL_W)
+                    //if(id==0) printf("[YH_DEBUG][mp%d][scheduler_fffrfcfs] bank scheduling. bank: %d, uid: %d access_t %d\n", id, b, req->data->get_request_uid(), req->data->get_access_type());
                 req->data->set_status(IN_PARTITION_MC_BANK_ARB_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
                 prio = (prio + 1) % m_config->nbk;
                 bk[b]->mrq = req;

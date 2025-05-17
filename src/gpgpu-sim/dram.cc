@@ -271,7 +271,7 @@ void dram_t::push(class mem_fetch *data) {
 
   data->set_status(IN_PARTITION_MC_INTERFACE_QUEUE,
                    m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
-  if(id==0) printf("[PSH_DEBUG][dram_t::push_from_l2] %d\n", mrq->data->get_request_uid());
+  //if(id==0) printf("[PSH_DEBUG][dram_t::push_from_l2] %d\n", mrq->data->get_request_uid());
   mrqq->push(mrq);
 
   // stats...

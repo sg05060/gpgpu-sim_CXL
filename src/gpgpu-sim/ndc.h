@@ -114,7 +114,7 @@ class L3_NDC_interface : public mem_fetch_interface {
     }
     virtual void push(mem_fetch *mf) {
         mf->set_status(IN_PARTITION_MC_RETURNQ, 0 /* TODO:gpu_sim_cycle+gpu_tot_sim_cycle*/);
-        printf("[PSH_DEBUG][ndc->returnq push] uid : %d, request_size : %d\n", mf->get_request_uid(), mf->get_access_size());
+        //printf("[PSH_DEBUG][ndc->returnq push] uid : %d, request_size : %d\n", mf->get_request_uid(), mf->get_access_size());
         m_unit->returnq->push(mf);
     }
 

@@ -685,18 +685,18 @@ void cache_stats::inc_stats(mem_fetch* mf, int access_type, int access_outcome,
   if (!check_valid(access_type, access_outcome)) {
     assert(0 && "Unknown cache access type or access outcome"); 
   }
-
-  // if (m_stats.find(streamID) == m_stats.end()) {
-  //   std::vector<std::vector<unsigned long long>> new_val;
-  //   new_val.resize(NUM_MEM_ACCESS_TYPE);
-  //   for (unsigned j = 0; j < NUM_MEM_ACCESS_TYPE; ++j) {
-  //     new_val[j].resize(NUM_CACHE_REQUEST_STATUS, 0);
-  //   }
-  //   m_stats.insert(std::pair<unsigned long long,
-  //                            std::vector<std::vector<unsigned long long>>>(
-  //       streamID, new_val));
-  // }
-  // m_stats.at(streamID)[access_type][access_outcome]++;
+  //printf("[PSH_DEBUG][inc_stats] Check streamID %d", streamID);
+  if (m_stats.find(streamID) == m_stats.end()) {
+    std::vector<std::vector<unsigned long long>> new_val;
+    new_val.resize(NUM_MEM_ACCESS_TYPE);
+    for (unsigned j = 0; j < NUM_MEM_ACCESS_TYPE; ++j) {
+      new_val[j].resize(NUM_CACHE_REQUEST_STATUS, 0);
+    }
+    m_stats.insert(std::pair<unsigned long long,
+                             std::vector<std::vector<unsigned long long>>>(
+        streamID, new_val));
+  }
+  m_stats.at(streamID)[access_type][access_outcome]++;
 }
 
 void cache_stats::inc_stats_pw(int access_type, int access_outcome,
@@ -1257,13 +1257,13 @@ void baseline_cache::fill(mem_fetch *mf, unsigned time) {
 
     if (e->second.pending_read > 0) {
       // wait for the other requests to come back
-      printf("[PSH_DEBUG]delete_mf1 : uid : %d", mf->get_request_uid());
+      //printf("[PSH_DEBUG]delete_mf1 : uid : %d", mf->get_request_uid());
       delete mf; 
       return;
     } else {
       mem_fetch *temp = mf;
       mf = mf->get_original_mf();
-      printf("[PSH_DEBUG]delete_mf2 : uid : %d", temp->get_request_uid());
+      //printf("[PSH_DEBUG]delete_mf2 : uid : %d", temp->get_request_uid());
       delete temp; 
     }
   }
@@ -1998,7 +1998,7 @@ enum cache_request_status data_cache::process_tag_probe(
 enum cache_request_status data_cache::access(new_addr_type addr, mem_fetch *mf,
                                              unsigned time,
                                              std::list<cache_event> &events) {
-  if(mf->get_data_size() > m_config.get_atom_sz()) {printf("[PSH_DEBUG]cache_access bigger than 32B\n"); mf->print(stdout);}
+  //if(mf->get_data_size() > m_config.get_atom_sz()) {printf("[PSH_DEBUG]cache_access bigger than 32B\n"); mf->print(stdout);}
   assert(mf->get_data_size() <= m_config.get_atom_sz()); //FIXME
 
   bool wr = mf->get_is_write();

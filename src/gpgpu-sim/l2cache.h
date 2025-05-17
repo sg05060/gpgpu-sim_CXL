@@ -207,6 +207,11 @@ class memory_partition_unit {
   wrbk_tracker mf_wrbk_tracker;
   std::set<mem_fetch*> m_request_tracker_dram;
   std::set<mem_fetch*> m_request_tracker_ndc;
+  std::set<mem_fetch*> m_read_credit_tracker;
+  std::set<mem_fetch*> m_wrbk_delete_tracker;
+
+  std::set<std::pair<mem_fetch*, int>> m_wrbk_tracker;
+  std::set<std::pair<int, int>> m_wrbk_done_tracker;
 
  public:
   unsigned int dram_total_cycle_cnt;
@@ -227,6 +232,16 @@ class memory_partition_unit {
   unsigned int ndc_data_port_busy_cnt;
   unsigned int ndc_fill_port_busy_cnt;
   unsigned int print_flag;
+
+  unsigned int wrbk_borrow_credit;
+  unsigned int global_acc_borrow_credit;
+  std::vector<unsigned int> read_borrow_credit;
+  std::vector<unsigned int> read_return_credit;
+  unsigned int wrbk_return_credit;
+  unsigned int global_acc_return_credit;
+  unsigned int return_credit;
+  unsigned int borrow_credit;
+  unsigned int wrbk_access_cnt;
   // } pshyun
 };
 

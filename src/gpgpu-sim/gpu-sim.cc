@@ -1200,6 +1200,7 @@ bool gpgpu_sim::active() {
   ;
   if (icnt_busy()) return true;
   if (get_more_cta_left()) return true;
+  
   return false;
 }
 
@@ -1555,20 +1556,22 @@ void gpgpu_sim::gpu_print_stat(unsigned long long streamID) {
   // shader_print_l1_miss_stat( stdout );
   shader_print_cache_stats(stdout);
 
-  cache_stats core_cache_stats;
-  core_cache_stats.clear();
-  for (unsigned i = 0; i < m_config.num_cluster(); i++) {
-    m_cluster[i]->get_cache_stats(core_cache_stats);
-  }
-  printf("\nTotal_core_cache_stats:\n");
-  core_cache_stats.print_stats(stdout, streamID,
-                               "Total_core_cache_stats_breakdown");
-  printf("\nTotal_core_cache_fail_stats:\n");
-  core_cache_stats.print_fail_stats(stdout, streamID,
-                                    "Total_core_cache_fail_stats_breakdown");
-  shader_print_scheduler_stat(stdout, false);
+  // FIXME
+  // cache_stats core_cache_stats;
+  // core_cache_stats.clear();
+  // for (unsigned i = 0; i < m_config.num_cluster(); i++) {
+  //   m_cluster[i]->get_cache_stats(core_cache_stats);
+  // }
+  // printf("\nTotal_core_cache_stats:\n");
+  // core_cache_stats.print_stats(stdout, streamID,
+  //                              "Total_core_cache_stats_breakdown");
+  // printf("\nTotal_core_cache_fail_stats:\n");
+  // core_cache_stats.print_fail_stats(stdout, streamID,
+  //                                   "Total_core_cache_fail_stats_breakdown");
+  // shader_print_scheduler_stat(stdout, false);
 
-  m_shader_stats->print(stdout);
+  // m_shader_stats->print(stdout);
+
 #ifdef GPGPUSIM_POWER_MODEL
   if (m_config.g_power_simulation_enabled) {
     if (m_config.g_power_simulation_mode > 0) {
@@ -2096,6 +2099,21 @@ void gpgpu_sim::cycle() {
           m_power_stats->pwr_mem_stat->n_wr_WB[CURRENT_STAT_IDX][i],
           m_power_stats->pwr_mem_stat->n_req[CURRENT_STAT_IDX][i]);
     }
+    // pshyun {
+    if (gpu_sim_cycle > 0) {
+      if (gpu_sim_cycle >= GPU_TIMEOUT) {
+          printf("[YH_DEBUG][gpu-sim.cc][TIME-OUT] gpu_sim_cycle >= %d!\n", GPU_TIMEOUT);
+          for (int j = 0; j < m_memory_config->m_n_mem; j++)
+              if ((j == TGT_MPID) || (TGT_MPID == -1)) {
+                  printf("[YH_DEBUG][gpu-sim.cc][TIME-OUT] mp[%d] busy = %d!\n", j, m_memory_partition_unit[j]->busy());
+                  if (m_memory_partition_unit[j]->busy()) m_memory_partition_unit[j]->print(stdout);
+              }
+          printf("[YH_DEBUG][gpu-sim.cc][TIME-OUT] gpu_sim_cycle >= %d!\n", GPU_TIMEOUT);
+          fflush(stdout);
+          assert(0);
+      }
+    }
+    // } pshyun
   }
 
   // L2 operations follow L2 clock domain
