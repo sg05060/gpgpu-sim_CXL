@@ -210,8 +210,8 @@ class memory_partition_unit {
   std::set<mem_fetch*> m_read_credit_tracker;
   std::set<mem_fetch*> m_wrbk_delete_tracker;
 
-  std::set<std::pair<mem_fetch*, int>> m_wrbk_tracker;
-  std::set<std::pair<int, int>> m_wrbk_done_tracker;
+  std::map<mem_fetch*, int> m_wrbk_tracker;
+  std::map<int, int> m_wrbk_done_tracker;
 
  public:
   unsigned int dram_total_cycle_cnt;
