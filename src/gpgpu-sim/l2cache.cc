@@ -578,30 +578,14 @@ void memory_partition_unit::dram_cycle() {
               // fill done. L2 is already done
               // delete mf_new
               // distinguish sector_request or not
-              if(m_wrbk_tracker.find(mf_return) != m_wrbk_tracker.end()) { // 32B WRBK Case
-                if(m_wrbk_done_tracker[m_wrbk_tracker[mf_return]] == 0) { // first_access      
-                  m_wrbk_done_tracker[m_wrbk_tracker[mf_return]] = 1;
-                  m_arbitration_metadata.return_credit(dest_spid);  // return credit
-                  return_credit++;
-                  mf_return->set_dram_done(true);
-                  m_sub_partition[dest_spid]->set_done(mf_return->get_original_mf());
-                  wrbk_return_credit += 1;
-                  clear_orig_wrbk_mf(mf_return->get_original_mf());
-                  m_wrbk_tracker.erase(mf_return);
-                  delete mf_return->get_original_mf();
-                  delete mf_return;
-                } else { // ~second_access, no_return_credit
-                  m_wrbk_tracker.erase(mf_return);
-                  delete mf_return;
-                }
-                m_dram->return_queue_pop();
-              } else { // 32B WRBK or GLOBAL_W or GLOBAL_R or L2_WR_ALLOC_R
-                mf_return->set_dram_done(true);
-                m_arbitration_metadata.return_credit(dest_spid);
-                return_credit++;
-                delete_new_mf(mf_return);   // just deleted
-                m_dram->return_queue_pop();
-              }
+              
+               // 32B WRBK or GLOBAL_W or GLOBAL_R or L2_WR_ALLOC_R
+              mf_return->set_dram_done(true);
+              m_arbitration_metadata.return_credit(dest_spid);
+              return_credit++;
+              delete_new_mf(mf_return);   // just deleted
+              m_dram->return_queue_pop();
+            
               // if(mf_return->get_original_mf() != nullptr) {
               //   if(find_orig_wrbk_mf(mf_return->get_original_mf())) { // > 32B WRBK Case
               //     m_arbitration_metadata.return_credit(dest_spid);  // return credit
@@ -645,34 +629,12 @@ void memory_partition_unit::dram_cycle() {
           if (mf_return->get_access_type() == L1_WRBK_ACC || mf_return->get_access_type() == L2_WRBK_ACC) {
               mf_return->set_l2_done(true);
               mf_return->set_dram_done(true);
-
-              if(m_wrbk_tracker.find(mf_return) != m_wrbk_tracker.end()) { // > 32B WRBK
-                if(m_wrbk_done_tracker[m_wrbk_tracker[mf_return]] == 0) {
-                  m_wrbk_done_tracker[m_wrbk_tracker[mf_return]] = 1;
-                  m_arbitration_metadata.return_credit(dest_spid);  // return credit
-                  wrbk_return_credit += 1;
-                  mf_return->set_dram_done(true);
-                  m_sub_partition[dest_spid]->set_done(mf_return->get_original_mf());
-                  clear_orig_wrbk_mf(mf_return->get_original_mf());
-                  m_wrbk_tracker.erase(mf_return);
-                  delete mf_return->get_original_mf();
-                  delete mf_return;
-                } else {
-                  m_wrbk_tracker.erase(mf_return);
-                  delete mf_return;
-                }
-                m_dram->return_queue_pop();
-              } else { // ==32B WRBK
-                m_arbitration_metadata.return_credit(dest_spid);  // return credit
-                return_credit++;
-                //wrbk_return_credit += 1;
-                //printf("[PSH_DEBUG][%d]Find First WRBK(HIT)(Single) Returnq Request mf_uid %d, mf_origin_uid %d\n", m_gpu->gpu_sim_cycle, mf_return->get_request_uid());
-                m_sub_partition[dest_spid]->set_done(mf_return);
-                clear_orig_wrbk_mf(mf_return);
-                delete mf_return;
-                m_dram->return_queue_pop();
-              }
-
+              m_sub_partition[dest_spid]->set_done(mf_return->get_original_mf());
+              m_arbitration_metadata.return_credit(dest_spid);
+              delete mf_orig;                                   // TODO need to check
+              delete_new_mf(mf_return);
+              m_dram->return_queue_pop();
+            
               // if(mf_return->get_original_mf() != nullptr) { // > 32B WRBK
               //   if(find_orig_wrbk_mf(mf_return->get_original_mf())) {
               //     m_arbitration_metadata.return_credit(dest_spid);  // return credit
@@ -711,15 +673,6 @@ void memory_partition_unit::dram_cycle() {
               m_dram->return_queue_pop();
               m_arbitration_metadata.return_credit(dest_spid);  // return credit
               return_credit++;
-              if(mf_return->get_access_type() == GLOBAL_ACC_W) {
-                global_acc_return_credit += 1;
-              } else {
-                assert(mf_return->get_access_type() == GLOBAL_ACC_R || mf_return->get_access_type() == L2_WR_ALLOC_R);
-                //read_return_credit += 1;
-                //read_return_credit[m_id] += 1;
-                //printf("[PSH_DEBUG] Find read_return_credit3 +1 uid : %llu\n", mf_orig->get_request_uid());
-                m_read_credit_tracker.erase(mf_orig);
-              }
           }
       } else if (mf_return->get_ndc_resp() == NDC_MISS) {
           // case1-1
@@ -769,16 +722,11 @@ void memory_partition_unit::dram_cycle() {
                   }
               } else {
                   // case 3-1-1, case4-1-1 (L1_WRBK, L2_WRBK)
-                  if(m_wrbk_tracker.find(mf_return) != m_wrbk_tracker.end()) {
-                    //printf("[PSH_DEBUG][%d]Find First WRBK Returnq Request mf_origin_uid %d\n",  m_gpu->gpu_sim_cycle, mf_return->get_original_mf());
-                    m_sub_partition[dest_spid]->set_done(mf_return->get_original_mf());
-                    clear_orig_wrbk_mf(mf_return->get_original_mf());
-                    //m_wrbk_tracker.erase(mf_return);
-                  }
+                  
                   mf_return->set_l2_done(true);
                   mf_return->set_dram_done(true);                    // set dram_done also for removing WRBK request's info. There is no mapping info between dram_req and NDC miss->fill request
-                  //m_sub_partition[dest_spid]->set_done(mf_orig);  // original WB request is deleted. no credit return. WR_LINE_FILL_DONE will return credit
-                  delete mf_return;   // mf_new deleted at here
+                  m_sub_partition[dest_spid]->set_done(mf_orig);  // original WB request is deleted. no credit return. WR_LINE_FILL_DONE will return credit
+                  delete_new_mf(mf_return);   // mf_new deleted at here
                   m_dram->return_queue_pop();
               }
           }
@@ -908,41 +856,12 @@ void memory_partition_unit::dram_cycle() {
       if (!m_sub_partition[spid]->L2_dram_queue_empty() && can_issue_to_dram(spid)) {
         if (!m_config->m_L3_NDC_config.disabled()) {
             mem_fetch *mf_orig = m_sub_partition[spid]->L2_dram_queue_top();
-
-            if ((mf_orig->get_access_type() == L1_WRBK_ACC) || (mf_orig->get_access_type() == L2_WRBK_ACC)) {
-              if (m_dram->afull(mf_orig->is_write(), ((mf_orig->get_data_size())/32))) break;
+            if(mf_orig->get_access_type() == L1_WRBK_ACC || mf_orig->get_access_type() == L2_WRBK_ACC) {
+              m_sub_partition[spid]->set_done(mf_orig); 
+              delete mf_orig;
               m_sub_partition[spid]->L2_dram_queue_pop();
-              //printf("[PSH_DEBUG][%d] Find WRBK Access\n",m_gpu->gpu_sim_cycle);
-              //printf("[PSH_DEBUG][%d]First L2_to_Dram queue\n",m_gpu->gpu_sim_cycle); mf_orig->print(stdout);
-
-              std::vector<mem_fetch *> mf_news;
-              mf_news = breakdown_wrbk_request_to_sector_requests(mf_orig);
-              
-              for (unsigned i = 0; i < mf_news.size(); ++i) {
-                mem_fetch *mf_new = mf_news[i];
-                //printf("[PSH_DEBUG][%d] Breakdown WRBK Access\n", m_gpu->gpu_sim_cycle);
-                //mf_new->print(stdout);
-                //printf(" Compare uid [%u, %u]\n",mf_orig, mf_new->get_original_mf());
-                //m_request_tracker.insert(mf_new);
-                if (mf_new->istexture()) {
-                  printf("[PSH_DEBUG] WRBK Error2\n");
-                } else {
-                  dram_delay_t d;
-                  d.req = mf_new;
-                  d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->dram_latency;
-                  m_dram_latency_queue.push_back(d);
-                  mf_new->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
-                  if(i == 0) {
-                    m_arbitration_metadata.borrow_credit(spid);
-                    borrow_credit++;
-                    if(mf_news.size() > 1) wrbk_borrow_credit += 1;
-                    init_orig_wrbk_mf(mf_orig);
-                  }
-                }
-              }
-              
+              break;
             } else {
-              
               if (m_dram->full(mf_orig->is_write())) break; // pshyun : GLOBAL_W or GLOBAL_R or L2_WR_ALLOC_R
               //wrong...opposite_way: if(mf_new->get_data_size() < 64) {
               //wrong...opposite_way:     // set minimum access granularity to acces NDC is 64B...
@@ -950,6 +869,9 @@ void memory_partition_unit::dram_cycle() {
               //wrong...opposite_way: }
               m_sub_partition[spid]->L2_dram_queue_pop();
               mem_fetch *mf_new = create_new_mf(mf_orig);
+
+              if(mf_new->get_data_size() > 32) printf("[PSH_DEBUG]Error, >32B request\n");
+
               //{printf("[PSH_DEBUG][%d]First L2_to_Dram queue\n",m_gpu->gpu_sim_cycle); mf_orig->print(stdout); mf_new->print(stdout);}
               if((mf_new->get_access_type() == GLOBAL_ACC_W) && (mf_new->get_data_size() > 32)) printf("[PSH_DEBUG] GLOBALL_ACC_W is bigger than 32 %d\n",mf_new->get_data_size());
               MEMPART_DPRINTF("Issue mem_fetch request %p from sub partition %d to dram\n", mf_new, spid);
@@ -961,14 +883,6 @@ void memory_partition_unit::dram_cycle() {
               mf_new->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
               m_arbitration_metadata.borrow_credit(spid);
               borrow_credit++;
-              if(mf_orig->get_access_type() == GLOBAL_ACC_W) {
-                global_acc_borrow_credit += 1;
-              } else {
-                //printf("[PSH_DEBUG][%d]Read Borror Credit\n",m_gpu->gpu_sim_cycle); mf_orig->print(stdout);
-                //read_borrow_credit += 1;
-                read_borrow_credit[m_id] += 1;
-                m_read_credit_tracker.insert(mf_orig);
-              }
               // required for predcitor / prefetcher
               break;  // the DRAM should only accept one request per cycle
             }
