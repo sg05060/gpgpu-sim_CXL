@@ -316,6 +316,7 @@ class memory_sub_partition {
   fifo_pipeline<mem_fetch> *m_L2_dram_queue;
   fifo_pipeline<mem_fetch> *m_dram_L2_queue;
   fifo_pipeline<mem_fetch> *m_L2_icnt_queue;  // L2 cache hit response queue
+  std::list<mem_fetch*> m_wrbk_breakdown_queue;
   unsigned print_flag;
  // } pshyun
 

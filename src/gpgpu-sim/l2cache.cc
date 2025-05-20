@@ -797,9 +797,39 @@ void memory_partition_unit::dram_cycle() {
       if (!m_sub_partition[spid]->L2_dram_queue_empty() && can_issue_to_dram(spid)) {
         if (!m_config->m_L3_NDC_config.disabled()) {
             mem_fetch *mf_orig = m_sub_partition[spid]->L2_dram_queue_top();
-            if(mf_orig->get_access_type() == L1_WRBK_ACC || mf_orig->get_access_type() == L2_WRBK_ACC) {
-              m_sub_partition[spid]->set_done(mf_orig); 
-              delete mf_orig;
+            if (!m_sub_partition[spid]->m_wrbk_breakdown_queue.empty()){
+              if (m_dram->full(mf_orig->is_write())) break;
+              mem_fetch *mf_new = m_sub_partition[spid]->m_wrbk_breakdown_queue.front();
+              dram_delay_t d;
+              d.req = mf_new;
+              d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->dram_latency;
+              m_dram_latency_queue.push_back(d);
+              mf_new->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+              m_arbitration_metadata.borrow_credit(spid);
+              borrow_credit++;
+              m_sub_partition[spid]->m_wrbk_breakdown_queue.pop_front();
+              break;
+            }
+            else if(mf_orig->get_access_type() == L1_WRBK_ACC || mf_orig->get_access_type() == L2_WRBK_ACC) {
+              if (m_dram->full(mf_orig->is_write())) break;
+
+              std::vector<mem_fetch *> mf_news;
+              mf_news = breakdown_wrbk_request_to_sector_requests(mf_orig);
+              for(int i = 0; i < mf_news.size(); i++) {
+                if(i == 0) {
+                  mem_fetch *mf_new = mf_news[i];
+                  dram_delay_t d;
+                  d.req = mf_new;
+                  d.ready_cycle = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle + m_config->dram_latency;
+                  m_dram_latency_queue.push_back(d);
+                  mf_new->set_status(IN_PARTITION_DRAM_LATENCY_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
+                  m_arbitration_metadata.borrow_credit(spid);
+                  borrow_credit++;
+                } else {
+                  m_sub_partition[spid]->m_wrbk_breakdown_queue.push_back(mf_news[i]);
+                }
+              }
+
               m_sub_partition[spid]->L2_dram_queue_pop();
               break;
             } else {
