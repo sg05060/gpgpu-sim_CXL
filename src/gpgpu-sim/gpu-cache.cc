@@ -1409,9 +1409,10 @@ void baseline_cache::send_read_request(new_addr_type addr,
     if (!wa) events.push_back(cache_event(READ_REQUEST_SENT));
 
     do_miss = true;
-  } else if (mshr_hit && !mshr_avail)
+  } else if (mshr_hit && !mshr_avail) {
     m_stats.inc_fail_stats(mf->get_access_type(), MSHR_MERGE_ENRTY_FAIL,
                            mf->get_streamID());
+  }
   else if (!mshr_hit && !mshr_avail)
     m_stats.inc_fail_stats(mf->get_access_type(), MSHR_ENRTY_FAIL,
                            mf->get_streamID());
@@ -1552,18 +1553,22 @@ enum cache_request_status data_cache::wr_miss_wa_naive(
        !(!mshr_hit && mshr_avail &&
          (m_miss_queue.size() < m_config.m_miss_queue_size)))) {
     // check what is the exactly the failure reason
-    if (miss_queue_full(2))
+    if (miss_queue_full(2)) {
       m_stats.inc_fail_stats(mf->get_access_type(), MISS_QUEUE_FULL,
                              mf->get_streamID());
-    else if (mshr_hit && !mshr_avail)
+    }
+    else if (mshr_hit && !mshr_avail) {
+
       m_stats.inc_fail_stats(mf->get_access_type(), MSHR_MERGE_ENRTY_FAIL,
                              mf->get_streamID());
-    else if (!mshr_hit && !mshr_avail)
+    }
+    else if (!mshr_hit && !mshr_avail) {
       m_stats.inc_fail_stats(mf->get_access_type(), MSHR_ENRTY_FAIL,
                              mf->get_streamID());
-    else
+    }
+    else {
       assert(0);
-
+    }
     return RESERVATION_FAIL;
   }
 
@@ -1587,6 +1592,22 @@ enum cache_request_status data_cache::wr_miss_wa_naive(
   bool do_miss = false;
   bool wb = false;
   evicted_block_info evicted;
+
+  // FIXME
+  if(mshr_hit && mshr_avail) {
+    if (mf->get_is_write() && (strcmp(m_name.c_str(), "NDC") == 0)) {
+        printf("[PSH_DEBUG][NDC][WRITE MISS + MSHR HIT] uid=%d addr=0x%08x streamID=%llu\n",
+            n_mf->get_request_uid(), n_mf->get_addr(), n_mf->get_streamID());
+        n_mf->print(stdout);
+    }
+  } else if(!mshr_hit && mshr_avail) {
+    if (mf->get_is_write() && (strcmp(m_name.c_str(), "NDC") == 0)) {
+        printf("[PSH_DEBUG][NDC][WRITE MISS + MSHR MISS] uid=%d addr=0x%08x streamID=%llu\n",
+            n_mf->get_request_uid(), n_mf->get_addr(), n_mf->get_streamID());
+        n_mf->print(stdout);
+    }
+  }
+
 
   // Send read request resulting from write miss
   send_read_request(addr, block_addr, cache_index, n_mf, time, do_miss, wb,
