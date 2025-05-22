@@ -574,15 +574,15 @@ void memory_partition_unit::dram_cycle() {
               mf_return->set_dram_done(true);
               m_arbitration_metadata.return_credit(dest_spid);
               return_credit++;
-              if((mf_return->get_access_type()==NDC_WR_ALLOC_R)) {
-                printf("[PSH_DEBUG][%d][m_id%d]Find GLOBAL_ACC_W miss and mshr-hit fill-done\n",m_gpu->gpu_sim_cycle, m_id);
-                mf_return->print(stdout);
-                global_acc_return_credit++;
-              } else if((mf_return->get_access_type()==NDC_LINEFILL_W) && (mf_return->get_cxl_ret_path() == CXL_DRAM)){
-                printf("[PSH_DEBUG][%d][m_id%d]Find GLOBAL_ACC_W miss and mshr-miss fill-done\n",m_gpu->gpu_sim_cycle, m_id);
-                mf_return->print(stdout);
-                global_acc_return_credit++;
-              }
+              // if((mf_return->get_access_type()==NDC_WR_ALLOC_R)) {
+              //   printf("[PSH_DEBUG][%d][m_id%d]Find GLOBAL_ACC_W miss and mshr-hit fill-done\n",m_gpu->gpu_sim_cycle, m_id);
+              //   mf_return->print(stdout);
+              //   global_acc_return_credit++;
+              // } else if((mf_return->get_access_type()==NDC_LINEFILL_W) && (mf_return->get_cxl_ret_path() == CXL_DRAM)){
+              //   printf("[PSH_DEBUG][%d][m_id%d]Find GLOBAL_ACC_W miss and mshr-miss fill-done\n",m_gpu->gpu_sim_cycle, m_id);
+              //   mf_return->print(stdout);
+              //   global_acc_return_credit++;
+              // }
               delete_new_mf(mf_return);   // just deleted
               m_dram->return_queue_pop();
           }
@@ -680,8 +680,8 @@ void memory_partition_unit::dram_cycle() {
               mf_return->set_cxl_req_type(CXL_WR_LINE_FILL);
               mf_return->set_cxl_ret_path(CXL_DRAM);
 
-              printf("[PSH_DEBUG][%d][mid%d][NDC_WR_ALLOC_R] : ret_path = %d\n", m_gpu->gpu_sim_cycle, m_id, mf_return->get_cxl_ret_path());
-              mf_return->print(stdout);
+              //printf("[PSH_DEBUG][%d][mid%d][NDC_WR_ALLOC_R] : ret_path = %d\n", m_gpu->gpu_sim_cycle, m_id, mf_return->get_cxl_ret_path());
+              //mf_return->print(stdout);
 
               dram_cxl_queue_push(mf_return);
               mf_return->set_status(IN_PARTITION_DRAM_TO_CXL_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
@@ -930,9 +930,9 @@ void memory_partition_unit::dram_cycle() {
     }
   }
   
-  if(m_gpu->gpu_sim_cycle % 50000 == 0) {
-    printf("[PSH_DEBUG][%d][m_id%d] Borrow_Credit : %d(%d), Return_Credit : %d(%d)\n",m_gpu->gpu_sim_cycle, m_id, borrow_credit, global_acc_borrow_credit, return_credit, global_acc_return_credit);
-  }
+  // if(m_gpu->gpu_sim_cycle % 50000 == 0) {
+  //   printf("[PSH_DEBUG][%d][m_id%d] Borrow_Credit : %d(%d), Return_Credit : %d(%d)\n",m_gpu->gpu_sim_cycle, m_id, borrow_credit, global_acc_borrow_credit, return_credit, global_acc_return_credit);
+  // }
 
   // if (!m_dram_latency_queue_from_cxl.empty() && (!m_dram->full_from_cxl())) {
   //   printf("[PSH_DEBUG][m_dram_latency_queue_from_cxl compare] uid : %d, cycle : %d, ready_cycle : %d\n", m_dram_latency_queue_from_cxl.front().req->get_request_uid(),

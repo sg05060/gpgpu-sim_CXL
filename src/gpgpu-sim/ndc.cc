@@ -218,14 +218,14 @@ void ndc_t::cache_cycle(/*unsigned cycle*/) {
             if ((mf->get_access_type() == NDC_WR_ALLOC_R) && (mf->get_cxl_ret_path() == CXL_NONE)) {
                 
                 // debug
-                printf("[PSH_DEBUG]Write MSHR-MISS MSHR-HIT Response Here...\n"); 
-                mf->print(stdout);
+                // printf("[PSH_DEBUG]Write MSHR-MISS MSHR-HIT Response Here...\n"); 
+                // mf->print(stdout);
                 
                 mf->set_status(IN_PARTITION_MC_RETURNQ, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
                 mf->set_ndc_resp(NDC_FILL_DONE);
                 returnq->push(mf);
                 //delete mf;
-                
+
                 // NDC write -> miss -> mshr hit -> fill done. does not need to return to memory partition unit
                 if (mf->get_request_uid() == TGT_UID) {
                     printf("[YH_DEBUG][%d][NDC%d][fill_queue->no return_queue] fill_done_queue to no returnq. uid = %d, addr = 0x%x, status = %d\n", m_gpu->gpu_sim_cycle, id, mf->get_request_uid(),
@@ -235,7 +235,7 @@ void ndc_t::cache_cycle(/*unsigned cycle*/) {
                 //printf("[PSH_DEBUG][Check Delete0]\n");
                 //delete mf;
             } else {
-                if((mf->get_access_type()==NDC_LINEFILL_W) && (mf->get_cxl_ret_path() == CXL_DRAM)) { printf("[PSH_DEBUG]Write MSHR-MISS MSHR-MISS Response Here...\n"); mf->print(stdout);}
+                //if((mf->get_access_type()==NDC_LINEFILL_W) && (mf->get_cxl_ret_path() == CXL_DRAM)) { printf("[PSH_DEBUG]Write MSHR-MISS MSHR-MISS Response Here...\n"); mf->print(stdout);}
                 mf->set_status(IN_PARTITION_MC_RETURNQ, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
                 mf->set_ndc_resp(NDC_FILL_DONE);
                 // YH_DEBUG:#ifdef YH_DEBUG

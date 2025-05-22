@@ -1593,20 +1593,20 @@ enum cache_request_status data_cache::wr_miss_wa_naive(
   bool wb = false;
   evicted_block_info evicted;
 
-  // FIXME
-  if(mshr_hit && mshr_avail) {
-    if (mf->get_is_write() && (strcmp(m_name.c_str(), "NDC") == 0)) {
-        printf("[PSH_DEBUG][NDC][WRITE MISS + MSHR HIT] uid=%d addr=0x%08x streamID=%llu\n",
-            n_mf->get_request_uid(), n_mf->get_addr(), n_mf->get_streamID());
-        n_mf->print(stdout);
-    }
-  } else if(!mshr_hit && mshr_avail) {
-    if (mf->get_is_write() && (strcmp(m_name.c_str(), "NDC") == 0)) {
-        printf("[PSH_DEBUG][NDC][WRITE MISS + MSHR MISS] uid=%d addr=0x%08x streamID=%llu\n",
-            n_mf->get_request_uid(), n_mf->get_addr(), n_mf->get_streamID());
-        n_mf->print(stdout);
-    }
-  }
+  // // FIXME
+  // if(mshr_hit && mshr_avail) {
+  //   if (mf->get_is_write() && (strcmp(m_name.c_str(), "NDC") == 0)) {
+  //       printf("[PSH_DEBUG][NDC][WRITE MISS + MSHR HIT] uid=%d addr=0x%08x streamID=%llu\n",
+  //           n_mf->get_request_uid(), n_mf->get_addr(), n_mf->get_streamID());
+  //       n_mf->print(stdout);
+  //   }
+  // } else if(!mshr_hit && mshr_avail) {
+  //   if (mf->get_is_write() && (strcmp(m_name.c_str(), "NDC") == 0)) {
+  //       printf("[PSH_DEBUG][NDC][WRITE MISS + MSHR MISS] uid=%d addr=0x%08x streamID=%llu\n",
+  //           n_mf->get_request_uid(), n_mf->get_addr(), n_mf->get_streamID());
+  //       n_mf->print(stdout);
+  //   }
+  // }
 
 
   // Send read request resulting from write miss
