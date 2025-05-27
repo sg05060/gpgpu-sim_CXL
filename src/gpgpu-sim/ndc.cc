@@ -339,7 +339,7 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
                    // read/write miss cases
 
                    if (data->get_access_type() == GLOBAL_ACC_R || data->get_access_type() == CONST_ACC_R || data->get_access_type() == TEXTURE_ACC_R || data->get_access_type() == INST_ACC_R ||
-                       data->get_access_type() == L1_WR_ALLOC_R || data->get_access_type() == L2_WR_ALLOC_R) {
+                       data->get_access_type() == L1_WR_ALLOC_R || data->get_access_type() == L2_WR_ALLOC_R || data->get_access_type() == LOCAL_ACC_R) {
                        // Read miss. The request will be transfered through NDC miss queue
                        data->set_status(IN_PARTITION_NDC_MISS_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
                        data->set_ndc_resp(NDC_MISS);
@@ -349,7 +349,7 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
                    
                        // m_return_queue.push(data);
                        data->set_reply();
-                   } else if (data->get_access_type() == GLOBAL_ACC_W || data->get_access_type() == L1_WRBK_ACC || data->get_access_type() == L2_WRBK_ACC) {
+                   } else if (data->get_access_type() == GLOBAL_ACC_W || data->get_access_type() == L1_WRBK_ACC || data->get_access_type() == L2_WRBK_ACC || data->get_access_type() == LOCAL_ACC_W) {
                        // write miss
                        // WR_MISS original request goes back to returnq for deletion. WR_MISS newly created by NDC is goes to returnq through miss queue with invalid NDC_INVALID resp
                        data->set_ndc_resp(NDC_MISS);
