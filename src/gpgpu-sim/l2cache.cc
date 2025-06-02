@@ -570,7 +570,7 @@ void memory_partition_unit::dram_cycle() {
               // delete mf_new
               // distinguish sector_request or not
               
-               // 32B GLOBAL_W or GLOBAL_R or L2_WR_ALLOC_R
+              
               mf_return->set_dram_done(true);
               m_arbitration_metadata.return_credit(dest_spid);
               return_credit++;
@@ -1340,9 +1340,8 @@ std::vector<mem_fetch *> memory_partition_unit::breakdown_wrbk_request_to_sector
           mf->get_sid(), mf->get_tpc(), mf, mf->get_streamID());
 
       result.push_back(n_mf);
-      m_wrbk_tracker[n_mf] = wrbk_access_cnt;
     }
-    m_wrbk_done_tracker[wrbk_access_cnt] = 0;
+    
     wrbk_access_cnt++;
   } else {
     for (unsigned i = 0; i < SECTOR_CHUNCK_SIZE; i++) {
@@ -1360,10 +1359,9 @@ std::vector<mem_fetch *> memory_partition_unit::breakdown_wrbk_request_to_sector
             mf->get_streamID());
 
         result.push_back(n_mf);
-        m_wrbk_tracker[n_mf] = wrbk_access_cnt;
       }
     }
-    m_wrbk_done_tracker[wrbk_access_cnt] = 0;
+    
     wrbk_access_cnt++;
   }
   return result;
@@ -1701,6 +1699,7 @@ void memory_partition_unit::delete_new_mf(class mem_fetch *mf) {
 //YH_DEBUG:#endif  // YH_DEBUG
             if (m_request_tracker_dram.find(mf) != m_request_tracker_dram.end()) {
                 m_request_tracker_dram.erase(mf);
+                if(mf->get_ndc_resp() == NDC_HIT || mf->get_ndc_resp() == NDC_MISS) delete mf;
                 //delete mf;  // remove new mf (l2_done and dram_done) // FIXME
             } else {
                 //printf("[YH_DEBUG][%d][mp%d][delete_new_mf] mf.uid: %d. it is not in the request tracker, but try to delete.\n", m_gpu->gpu_sim_cycle, m_id, mf->get_request_uid());
