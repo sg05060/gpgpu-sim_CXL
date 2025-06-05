@@ -443,7 +443,7 @@ void memory_partition_unit::dram_cycle() {
             //dram_access_is_required:delete_new_mf(mf);
             m_sub_partition[dest_spid]->dram_L2_queue_push(mf_orig);
 
-            delete_new_mf(mf);
+            //delete_new_mf(mf); // PLEASE FIXME
 
             mf->set_cxl_ret_path(CXL_NONE);
             m_cxl_latency_queue.pop_front();
