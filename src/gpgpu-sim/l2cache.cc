@@ -426,7 +426,6 @@ void memory_partition_unit::dram_cycle() {
       if ((!ndc_fill_queue_full()) || (!m_sub_partition[dest_spid]->dram_L2_queue_full())) {
         mem_fetch *mf_orig = find_orig_mf(mf);
 
-        m_read_credit_tracker.erase(mf_orig); //FIXME
         //cxl read -> dram fill(write)
         mf->set_type_to_write();
         mf->set_status(IN_PARTITION_CXL_TO_DRAM_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
@@ -569,7 +568,6 @@ void memory_partition_unit::dram_cycle() {
               // fill done. L2 is already done
               // delete mf_new
               // distinguish sector_request or not
-              
               
               mf_return->set_dram_done(true);
               m_arbitration_metadata.return_credit(dest_spid);
@@ -1663,24 +1661,7 @@ class mem_fetch * memory_partition_unit::create_new_mf(class mem_fetch *mf) {
     m_request_tracker_dram.insert(mf_new);
     return mf_new;
 }
-void memory_partition_unit::set_orig_wrbk_mf_done(class mem_fetch *mf) {
-    mf_wrbk_tracker[mf] = 1; 
-}
-void memory_partition_unit::init_orig_wrbk_mf(class mem_fetch *mf) {
-    mf_wrbk_tracker[mf] = 0; 
-}
-void memory_partition_unit::clear_orig_wrbk_mf(class mem_fetch *mf) {
-    mf_wrbk_tracker.erase(mf); 
-}
-bool memory_partition_unit::find_orig_wrbk_mf(class mem_fetch* mf) {
-  auto it = mf_wrbk_tracker.find(mf);
-  if ( it != mf_wrbk_tracker.end() ) {
-      // key에 해당하는 요소가 있음
-      return true;
-  } else {
-      return false;
-  }
-}
+
 
 void memory_partition_unit::delete_new_mf(class mem_fetch *mf) {
     mem_fetch *mf_orig;

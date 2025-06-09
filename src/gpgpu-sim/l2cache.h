@@ -112,10 +112,6 @@ class memory_partition_unit {
   // pshyun {
   class mem_fetch* find_orig_mf(class mem_fetch* mf);
   class mem_fetch* create_new_mf(class mem_fetch* mf);
-  void set_orig_wrbk_mf_done(class mem_fetch* mf);
-  void init_orig_wrbk_mf(class mem_fetch* mf);
-  void clear_orig_wrbk_mf(class mem_fetch* mf);
-  bool find_orig_wrbk_mf(class mem_fetch* mf);
   void delete_new_mf(class mem_fetch* mf);
   void print_mf_map() const;
   void print_returnq() const;
@@ -202,16 +198,10 @@ class memory_partition_unit {
   std::vector<mem_fetch *> breakdown_wrbk_request_to_sector_requests(mem_fetch *mf);
 
   typedef std::map<mem_fetch *, mem_fetch *> mf_map;
-  typedef std::map<mem_fetch *, int> wrbk_tracker;
   mf_map mf_map_rvs;
-  wrbk_tracker mf_wrbk_tracker;
+
   std::set<mem_fetch*> m_request_tracker_dram;
   std::set<mem_fetch*> m_request_tracker_ndc;
-  std::set<mem_fetch*> m_read_credit_tracker;
-  std::set<mem_fetch*> m_wrbk_delete_tracker;
-
-  std::map<mem_fetch*, int> m_wrbk_tracker;
-  std::map<int, int> m_wrbk_done_tracker;
 
  public:
   unsigned int dram_total_cycle_cnt;
