@@ -831,7 +831,7 @@ void ndc_t::push_from_cxl(class mem_fetch *data) {
     } else {
         max_mrqs_temp = (max_mrqs_temp > mrqq->get_length()) ? max_mrqs_temp : mrqq->get_length();
     }
-    //m_stats->memlatstat_dram_access(data);
+    m_stats->memlatstat_dram_access(data);
 }
 bool ndc_t::full_from_cxl() const {
     //printf("[PSH_DEBUG][mp%d][full_from_cxl] error check\n");
