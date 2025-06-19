@@ -73,4 +73,17 @@ class frfcfs_scheduler {
   memory_stats_t *m_stats;
 };
 
+//pshyun_reservation_fail_debug
+class fffrfcfs_scheduler : public frfcfs_scheduler {
+public:
+    fffrfcfs_scheduler(const memory_config *config, dram_t *dm, memory_stats_t *stats)
+        : frfcfs_scheduler(config, dm, stats) {}
+
+    // Modified schedule function with reservation queue fullness information
+    dram_req_t *schedule_fill_only(unsigned bank, unsigned curr_row);
+    dram_req_t *schedule(unsigned bank, unsigned curr_row);
+
+    void print(FILE *fp);
+};
+
 #endif
