@@ -1321,6 +1321,27 @@ std::vector<mem_fetch *> memory_partition_unit::breakdown_wrbk_request_to_sector
   mem_access_sector_mask_t sector_mask = mf->get_access_sector_mask();
   if (mf->get_data_size() == SECTOR_SIZE &&
       mf->get_access_sector_mask().count() == 1) {
+      {
+        new_addr_type tmp_addr = mf->get_addr();
+        new_addr_type offset = 0x0;
+        tmp_addr &= (~0x7f);  //128B align
+        if (mf->get_access_sector_mask().to_ulong() == 0x1)
+          offset = SECTOR_SIZE * 0;
+        else if (mf->get_access_sector_mask().to_ulong() == 0x2) {
+          offset = SECTOR_SIZE * 1;
+        }
+        else if (mf->get_access_sector_mask().to_ulong() == 0x4) {
+          offset = SECTOR_SIZE * 2;
+        }
+        else if (mf->get_access_sector_mask().to_ulong() == 0x8) {
+          offset = SECTOR_SIZE * 3;
+        }
+        else {
+          assert(0);  //wrong condition
+        }
+        mf->set_addr(tmp_addr+offset);
+        //changed_to_faster_func:mf->set_addr((mf->get_addr() & (~0x7f)) + log2(mf->get_access_sector_mask().to_ulong()) * SECTOR_SIZE);  // add 32*sector mask's position to base_addr
+      }
     result.push_back(mf);
   }
   else if (mf->get_data_size() == MAX_MEMORY_ACCESS_SIZE) {
@@ -1469,6 +1490,27 @@ memory_sub_partition::breakdown_request_to_sector_requests(mem_fetch *mf) {
   mem_access_sector_mask_t sector_mask = mf->get_access_sector_mask();
   if (mf->get_data_size() == SECTOR_SIZE &&
       mf->get_access_sector_mask().count() == 1) {
+    {
+      new_addr_type tmp_addr = mf->get_addr();
+      new_addr_type offset = 0x0;
+      tmp_addr &= (~0x7f);  //128B align
+      if (mf->get_access_sector_mask().to_ulong() == 0x1)
+        offset = SECTOR_SIZE * 0;
+      else if (mf->get_access_sector_mask().to_ulong() == 0x2) {
+        offset = SECTOR_SIZE * 1;
+      }
+      else if (mf->get_access_sector_mask().to_ulong() == 0x4) {
+        offset = SECTOR_SIZE * 2;
+      }
+      else if (mf->get_access_sector_mask().to_ulong() == 0x8) {
+        offset = SECTOR_SIZE * 3;
+      }
+      else {
+        assert(0);  //wrong condition
+      }
+      mf->set_addr(tmp_addr+offset);
+      //changed_to_faster_func:mf->set_addr((mf->get_addr() & (~0x7f)) + log2(mf->get_access_sector_mask().to_ulong()) * SECTOR_SIZE);  // add 32*sector mask's position to base_addr
+    }
     result.push_back(mf);
   } else if (mf->get_data_size() == MAX_MEMORY_ACCESS_SIZE) {
     // break down every sector
