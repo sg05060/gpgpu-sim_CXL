@@ -100,6 +100,12 @@ class ndc_t : public dram_t {
     class L3_NDC_interface *m_L3_NDC_interface;
     friend class m_L3_NDC_interface;
     int err_cnt;
+
+    class fffrfcfs_scheduler *m_frfcfs_scheduler;
+    friend class frfcfs_scheduler;
+    bool full(bool is_write) const;
+    bool afull(bool is_write, int threshold) const;
+    unsigned que_length() const;
     //  } pshyun
 };
 

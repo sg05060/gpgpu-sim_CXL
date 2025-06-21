@@ -206,6 +206,14 @@ void mem_fetch::set_cxl_req_type(mf_cxl_req_type req_type) {
 mf_cxl_req_type mem_fetch::get_cxl_req_type() const {
     return m_cxl_req_type;
 }
+
+bool mem_fetch::is_cxl_fill_req() const {  
+	if((get_cxl_req_type() == CXL_RD_LINE_FILL) || (get_cxl_req_type() == CXL_WR_LINE_FILL))
+		return true;
+	else
+		return false;
+}
+
 void mem_fetch::set_cxl_ret_path(mf_cxl_ret_path ret_path) {
     m_cxl_ret_path = ret_path;
 }

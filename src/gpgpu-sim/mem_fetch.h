@@ -103,6 +103,7 @@ class mem_fetch {
   // pshyun {
   void             set_cxl_req_type(mf_cxl_req_type req_type);
   mf_cxl_req_type  get_cxl_req_type() const;
+  bool             is_cxl_fill_req() const;
   void             set_cxl_ret_path(mf_cxl_ret_path ret_path);
   mf_cxl_ret_path  get_cxl_ret_path() const;
   void             set_ndc_resp(mf_ndc_resp_type ndc_resp);

@@ -169,7 +169,8 @@ ndc_t::ndc_t(unsigned int partition_id, const struct memory_config *config, memo
    returnq = new fifo_pipeline<mem_fetch>("dramreturnq",0,m_config->gpgpu_dram_return_queue_size==0?1024:m_config->gpgpu_dram_return_queue_size); 
    m_frfcfs_scheduler = NULL;
    if ( m_config->scheduler_type == DRAM_FRFCFS )
-      m_frfcfs_scheduler = new frfcfs_scheduler(m_config,this,stats);
+      //yhyang:m_frfcfs_scheduler = new frfcfs_scheduler(m_config,this,stats);
+       m_frfcfs_scheduler = new fffrfcfs_scheduler(m_config, this, stats);  // yhyang
    n_cmd = 0;
    n_activity = 0;
    n_nop = 0; 
@@ -396,10 +397,14 @@ void ndc_t::ndc_access(dram_req_t *cmd, bool from_rsvq) {
                    // RESERVATION_FAIL
                    // NDC cache lock-up: will try again next cycle
                    // push to ndc_rsv_fail_queue instead of rwq:rwq->push(cmd);   // RESERVATION_FAIL
-                   if (!ndc_rsv_fail_queue->full())
+                   if (!ndc_rsv_fail_queue->full()) {
                        ndc_rsv_fail_queue->push(cmd);
-                   else
-                       rwq->push(cmd);
+                   }
+                   else {
+                        rwq->push(cmd);
+                        printf("[YH_DEBUG][NDC%d] Reservation fail queue must not be full!!!\n", id);    //increase ndc_rsv_fail_queue size or call schedule_fill_only more earlier at scheduler_frfcfs
+                        assert(0);
+                   }
                }
 #ifdef YH_DEBUG
                printf("[YH_DEBUG][NDC%d] print status after ndc_cache response treatment\n", id);
@@ -842,76 +847,6 @@ bool ndc_t::full_from_cxl() const {
     } else
         return fill_mrqq->full();
 }
-void ndc_t::scheduler_fffrfcfs() {
-    unsigned mrq_latency;
-    frfcfs_scheduler *sched = m_frfcfs_scheduler;
-    // fill_mrqq first
-    while (!fill_mrqq->empty() && (!m_config->gpgpu_frfcfs_dram_sched_queue_size || sched->num_pending() < m_config->gpgpu_frfcfs_dram_sched_queue_size)) {
-        dram_req_t *req = fill_mrqq->pop();
-#ifdef YH_DEBUG
-        printf("[YH_DEBUG][mp%d][scheduler_fffrfcfs] fill_mrqq is not empty. req->data->uid : %d\n", id, req->data->get_request_uid());
-#endif  // YH_DEBUG
-
-        // Power stats
-        // if(req->data->get_type() != READ_REPLY && req->data->get_type() != WRITE_ACK)
-        m_stats->total_n_access++;
-
-        if (req->data->get_type() == WRITE_REQUEST) {
-            m_stats->total_n_writes++;
-        } else if (req->data->get_type() == READ_REQUEST) {
-            m_stats->total_n_reads++;
-        }
-
-        req->data->set_status(IN_PARTITION_MC_INPUT_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
-        sched->add_req(req);
-        //printf("[PSH_DEBUG]fill_mrqq->pop and add to sched : uid %d\n", req->data->get_request_uid());
-    }
-    while (!mrqq->empty() && (!m_config->gpgpu_frfcfs_dram_sched_queue_size || sched->num_pending() < m_config->gpgpu_frfcfs_dram_sched_queue_size)) {
-        dram_req_t *req = mrqq->pop();
-#ifdef YH_DEBUG
-        printf("[YH_DEBUG][mp%d][scheduler_fffrfcfs] mrqq is not empty. req->data->uid : %d\n", id, req->data->get_request_uid());
-#endif  // YH_DEBUG
-
-        // Power stats
-        // if(req->data->get_type() != READ_REPLY && req->data->get_type() != WRITE_ACK)
-        m_stats->total_n_access++;
-
-        if (req->data->get_type() == WRITE_REQUEST) {
-            m_stats->total_n_writes++;
-        } else if (req->data->get_type() == READ_REQUEST) {
-            m_stats->total_n_reads++;
-        }
-
-        req->data->set_status(IN_PARTITION_MC_INPUT_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
-        sched->add_req(req);
-    }
-
-    dram_req_t *req;
-    unsigned i;
-    for (i = 0; i < m_config->nbk; i++) {
-        unsigned b = (i + prio) % m_config->nbk;
-        if (!bk[b]->mrq) {
-            req = sched->schedule(b, bk[b]->curr_row);
-            if (req) {
-                //if(req->data->get_access_type() == NDC_LINEFILL_W)
-                    //if(id==0) printf("[YH_DEBUG][mp%d][scheduler_fffrfcfs] bank scheduling. bank: %d, uid: %d access_t %d\n", id, b, req->data->get_request_uid(), req->data->get_access_type());
-                req->data->set_status(IN_PARTITION_MC_BANK_ARB_QUEUE, m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle);
-                prio = (prio + 1) % m_config->nbk;
-                bk[b]->mrq = req;
-                if (m_config->gpgpu_memlatency_stat) {
-                    mrq_latency = m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle - bk[b]->mrq->timestamp;
-                    bk[b]->mrq->timestamp = m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle;
-                    m_stats->mrq_lat_table[LOGB2(mrq_latency)]++;
-                    if (mrq_latency > m_stats->max_mrq_latency) {
-                        m_stats->max_mrq_latency = mrq_latency;
-                    }
-                }
-
-                break;
-            }
-        }
-    }
-}
 
 void ndc_t::accumulate_L3_NDCcache_stats(class cache_stats &l3_ndc_stats) const {
     if (!m_config->m_L3_NDC_config.disabled()) {
@@ -923,6 +858,50 @@ void ndc_t::get_L3_NDCcache_sub_stats(struct cache_sub_stats &css) const {
     if (!m_config->m_L3_NDC_config.disabled()) {
         m_ndc_cache->get_sub_stats(css);
     }
+}
+
+bool ndc_t::full(bool is_write) const {
+  if (m_config->scheduler_type == DRAM_FRFCFS) {
+    if (m_config->gpgpu_frfcfs_dram_sched_queue_size == 0) return false;
+    if (m_config->seperate_write_queue_enabled) {
+      if (is_write)
+        return (m_frfcfs_scheduler->num_write_pending()+1) >=
+               m_config->gpgpu_frfcfs_dram_write_queue_size;
+      else
+        return (m_frfcfs_scheduler->num_pending()+1) >=
+               m_config->gpgpu_frfcfs_dram_sched_queue_size;
+    } else
+      return (m_frfcfs_scheduler->num_pending()+1) >=
+             m_config->gpgpu_frfcfs_dram_sched_queue_size;
+  } else
+    return mrqq->full();
+}
+
+bool ndc_t::afull(bool is_write, int threshold) const {
+  if (m_config->scheduler_type == DRAM_FRFCFS) {
+    if (m_config->gpgpu_frfcfs_dram_sched_queue_size == 0) return false;
+    if (m_config->seperate_write_queue_enabled) {
+      if (is_write)
+        return (m_frfcfs_scheduler->num_write_pending()+1) >=
+               m_config->gpgpu_frfcfs_dram_write_queue_size;
+      else
+        return (m_frfcfs_scheduler->num_pending()+1) >=
+               m_config->gpgpu_frfcfs_dram_sched_queue_size;
+    } else
+      return ((m_frfcfs_scheduler->num_pending()+1) + threshold) >=
+             m_config->gpgpu_frfcfs_dram_sched_queue_size;
+  } else
+    return mrqq->full();
+}
+
+unsigned ndc_t::que_length() const {
+  unsigned nreqs = 0;
+  if (m_config->scheduler_type == DRAM_FRFCFS) {
+    nreqs = m_frfcfs_scheduler->num_pending();
+  } else {
+    nreqs = mrqq->get_length();
+  }
+  return nreqs;
 }
 
 // } yhyang

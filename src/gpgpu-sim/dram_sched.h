@@ -52,7 +52,7 @@ class frfcfs_scheduler {
   unsigned num_pending() const { return m_num_pending; }
   unsigned num_write_pending() const { return m_num_write_pending; }
 
- private:
+ protected:
   const memory_config *m_config;
   dram_t *m_dram;
   unsigned m_num_pending;
